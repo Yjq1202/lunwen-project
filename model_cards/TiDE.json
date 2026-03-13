@@ -1,0 +1,97 @@
+{
+  "model_name": "TiDE",
+  "Primary Task Type": "Time Series Forecasting (Long-term / Short-term) with optional Imputation support",
+  "Model Architecture Category": "MLP-based (Residual Feedforward / Encoder-Decoder style, no attention)",
+  "Core Mechanism & Structure": "An MLP encoder-decoder that operates on a per-variable basis: for each target channel, the model normalizes the input sequence, concatenates it with flattened encoded time/exogenous features, passes the result through a stack of residual MLP (ResBlock) layers (\"encoders\"), then through another stack of residual MLP layers (\"decoders\") to produce a horizon-length output. A separate temporal decoding ResBlock mixes per-timestep decoded values with per-timestep future time features, and a linear residual projection from past values to the forecast horizon is added. Output is then de-normalized back to the original scale.",
+  "Core Innovations": "1) Pure-MLP encoder/decoder with residual connections and layer normalization for time series forecasting (no attention/RNN/CNN), operating on flattened sequence + exogenous feature encodings. 2) Explicit future time-feature conditioning via a dedicated temporalDecoder block that fuses decoded predictions with future time marks. 3) Residual path from historical sequence to prediction horizon via a learned linear projection (seq_len -> pred_len) added to the decoded output, stabilizing learning and capturing linear persistence.",
+  "Key Technical Details": {
+    "Input Embedding": "Uses a learned MLP feature_encoder (ResBlock) to map time/exogenous marks (batch_y_mark / x_mark_enc) from feature_dim (derived from freq) to feature_encode_dim, then flattens all encoded marks across time and concatenates with the normalized raw history sequence.",
+    "Feature Extraction": "Stacked residual MLP blocks (ResBlock: Linear->ReLU->Linear->Dropout + skip projection + LayerNorm) used as both encoder and decoder; no convolution and no attention.",
+    "Positional Encoding": "No explicit positional encoding module; temporal information is provided through exogenous/time-mark features encoded by feature_encoder and used both globally (flattened concat into encoder input) and locally (per-timestep concat into temporalDecoder).",
+    "Non-stationarity Handling": "Per-sample normalization inside forecast/imputation: subtract mean over time and divide by std over time, then de-normalize the final output. This is manual normalization, not RevIN."
+  },
+  "Evidence": {
+    "Direct Observations": [
+      {
+        "claim": "Model is an MLP/residual-block-based encoder-decoder without attention.",
+        "evidence": "models/TiDE.py defines ResBlock (Linear/ReLU/Linear/Dropout + skip + LayerNorm) and builds self.encoders = nn.Sequential(ResBlock(...), *[ResBlock(...)...]); self.decoders similarly; no attention modules/classes are present."
+      },
+      {
+        "claim": "Per-sample (per batch item) normalization and de-normalization are applied using mean/std over the time dimension.",
+        "evidence": "models/TiDE.py in forecast() and imputation(): means = x_enc.mean(1,...); x_enc = (x_enc - means)/stdev; later dec_out = dec_out * stdev + means."
+      },
+      {
+        "claim": "Time/exogenous marks are encoded with a learned feature_encoder and used both as flattened global conditioning and per-timestep conditioning in temporalDecoder.",
+        "evidence": "models/TiDE.py: self.feature_encoder = ResBlock(self.feature_dim,..., self.feature_encode_dim,...); hidden = self.encoders(torch.cat([x_enc, feature.reshape(feature.shape[0], -1)], dim=-1)); dec_out = self.temporalDecoder(torch.cat([feature[:,self.seq_len:], decoded], dim=-1)) (forecast) / torch.cat([feature[:,:self.seq_len], decoded], dim=-1) (imputation)."
+      },
+      {
+        "claim": "A learned linear residual projection from history to horizon is added to the main decoded output.",
+        "evidence": "models/TiDE.py: self.residual_proj = nn.Linear(self.seq_len, self.pred_len, ...); used as '+ self.residual_proj(x_enc)' in forecast(); for imputation/anomaly uses seq_len->seq_len."
+      },
+      {
+        "claim": "Forecasting is done per target channel by looping over features and stacking outputs.",
+        "evidence": "models/TiDE.py forward(): dec_out = torch.stack([self.forecast(x_enc[:, :, feature], ...) for feature in range(x_enc.shape[-1])], dim=-1)."
+      },
+      {
+        "claim": "Supported task branches in code: long_term_forecast, short_term_forecast, imputation; anomaly_detection/classification raise NotImplementedError for TiDE here.",
+        "evidence": "models/TiDE.py __init__ builds decoders/residual_proj for forecast/imputation/anomaly_detection; forward() raises NotImplementedError for anomaly_detection and classification."
+      },
+      {
+        "claim": "Frequency-dependent feature_dim for time marks is hard-coded via a freq_map.",
+        "evidence": "models/TiDE.py: freq_map = {'h': 4, 't': 5, 's': 6, 'm': 1, 'a': 1, 'w': 2, 'd': 3, 'b': 3}; self.feature_dim=freq_map[self.freq]."
+      }
+    ],
+    "Unknown / Not in Code": [
+      "Any attention mechanism (full/sparse/linear attention) is not implemented in the provided code.",
+      "RevIN or other specialized normalization layers are not present; only manual mean/std normalization is used.",
+      "Any explicit probabilistic forecasting head (e.g., distribution parameters, quantiles) is not present; output appears to be point forecasts."
+    ]
+  },
+  "Inferred Suitability": {
+    "Strengths": [
+      {
+        "label": "Efficient long-horizon forecasting without attention",
+        "why": "Computation is dominated by MLP layers on flattened inputs; avoids O(L^2) attention and uses simple Linear layers plus residuals.",
+        "conditions": "When seq_len is moderately large and attention-based models become expensive; especially when GPU memory is limited.",
+        "confidence": "medium"
+      },
+      {
+        "label": "Leverages known future covariates / calendar features effectively",
+        "why": "Future time marks are explicitly concatenated with decoded predictions in temporalDecoder, enabling conditioning on future exogenous signals.",
+        "conditions": "When batch_y_mark contains informative future covariates (e.g., hour-of-day/day-of-week/holiday indicators).",
+        "confidence": "high"
+      },
+      {
+        "label": "Stable training via residual path and normalization",
+        "why": "Uses residual_proj (history->horizon) plus residual MLP blocks and per-sample normalization/de-normalization, which often improves optimization and scale handling.",
+        "conditions": "When series have varying scales across instances and a strong linear persistence component exists.",
+        "confidence": "medium"
+      }
+    ],
+    "Weaknesses": [
+      {
+        "label": "Cross-variable dependency modeling is limited",
+        "why": "Forward processes each channel independently (loops over features and calls forecast/imputation on x_enc[:,:,feature]), so inter-feature interactions are not learned jointly.",
+        "conditions": "When multivariate series have strong contemporaneous or lagged relationships across variables (e.g., sensor networks, coupled economic indicators).",
+        "confidence": "high"
+      },
+      {
+        "label": "Flattened conditioning may scale poorly with long contexts",
+        "why": "Encoder input dimension is flatten_dim = seq_len + (seq_len+pred_len)*feature_encode_dim, which grows linearly with sequence lengths and increases parameter/memory in the first encoder block.",
+        "conditions": "When seq_len and/or pred_len are very large (e.g., thousands) leading to large first-layer matrices.",
+        "confidence": "medium"
+      },
+      {
+        "label": "Limited explicit temporal inductive bias beyond covariates",
+        "why": "No convolution, recurrence, or attention; temporal structure is mainly represented via raw sequence values and time-mark features, which may underperform when covariates are weak or absent.",
+        "conditions": "When time marks/exogenous features are missing/uninformative and the task requires sophisticated pattern extraction (e.g., complex seasonality/regime changes).",
+        "confidence": "medium"
+      }
+    ]
+  },
+  "Resource Requirements & Complexity": "Per target variable, the dominant cost is the first encoder ResBlock with input dimension flatten_dim = seq_len + (seq_len+pred_len)*feature_encode_dim, followed by (e_layers-1 + d_layers) ResBlocks of width d_model. Time complexity is roughly O(D * (flatten_dim*d_model + (e_layers+d_layers)*d_model^2 + pred_len*(c_out+feature_encode_dim)*d_ff)) where D is number of variables (because the model loops over channels). Parameter count similarly scales with flatten_dim*d_model for the first layer and with (e_layers+d_layers)*d_model^2; memory is moderate but grows with seq_len/pred_len due to flattening and per-variable looping.",
+  "Paper Link": "https://arxiv.org/pdf/2304.08424.pdf",
+  "_source_files": [
+    "models/TiDE.py"
+  ]
+}

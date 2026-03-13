@@ -1,0 +1,126 @@
+{
+  "model_name": "moment",
+  "Primary Task Type": "Masked time-series reconstruction pretraining (with optional fine-tuning for forecasting, classification, embedding, and anomaly detection)",
+  "Model Architecture Category": "Transformer-based (T5 encoder backbone) with patch-tokenization and reconstruction/forecasting/classification heads",
+  "Core Mechanism & Structure": "A multi-task time-series model that (1) normalizes input per-series using RevIN, (2) converts the sequence into fixed-length temporal patches (patch tokens) via a Patching tokenizer and PatchEmbedding (optionally with positional embeddings and patch dropout), (3) encodes patch tokens using a HuggingFace T5 encoder stack (self-attention Transformer encoder, optionally gradient-checkpointed and optionally randomly initialized), and (4) applies a task-specific head: (a) a linear patch-to-signal head for masked reconstruction pretraining, (b) a flattened linear head for direct multi-step forecasting, (c) a pooled linear head for classification, or (d) identity for embedding extraction. The reconstruction/forecast outputs are de-normalized back to the original scale via RevIN. Channel handling is done by reshaping (batch * channels) so each channel is encoded independently through the same encoder, with optional channel reduction (mean/concat) at the head interface for classification/embedding.",
+  "Core Innovations": "Leverages a large pre-trained language-model Transformer (T5 encoder) as a generic patch-token encoder for time series; combines masked patch reconstruction pretraining with RevIN normalization to mitigate non-stationarity; supports prompting-like behavior by concatenating learned prompt embeddings to patch tokens and extending the attention mask in reconstruct().",
+  "Key Technical Details": {
+    "Input Embedding": "Patch-based tokenization: input x_enc (B, C, L) is converted to patches via Patching(patch_len, stride) then embedded with PatchEmbedding(d_model, patch_len, stride, patch_dropout, add_positional_embedding, value_embedding_bias).",
+    "Feature Extraction": "Transformer encoder feature extraction using a HuggingFace T5 encoder (T5EncoderModel/T5Model.get_encoder()), consuming inputs_embeds directly with an attention_mask in patch-view; channel dimension is handled by flattening into (B*C, n_patches, d_model).",
+    "Positional Encoding": "Configurable positional embedding inside PatchEmbedding via add_positional_embedding flag (default True in code path).",
+    "Non-stationarity Handling": "RevIN normalization/denormalization (normalizer = RevIN(...); used with mode='norm' before encoding and mode='denorm' after heads). Also uses nan_to_num to avoid NaNs/Infs."
+  },
+  "Evidence": {
+    "Direct Observations": [
+      {
+        "claim": "Uses RevIN-style normalization and de-normalization around the backbone",
+        "evidence": "models/moment.py: self.normalizer = RevIN(...); used as self.normalizer(x=x_enc, mask=..., mode='norm') in embed()/reconstruction()/forecast()/classify(); and self.normalizer(x=dec_out, mode='denorm') after head in reconstruction()/reconstruct()/forecast()/short_forecast()."
+      },
+      {
+        "claim": "Tokenizes the time series into patches and embeds them before the Transformer",
+        "evidence": "models/moment.py: self.tokenizer = Patching(patch_len=..., stride=...); self.patch_embedding = PatchEmbedding(..., patch_len, stride, patch_dropout, add_positional_embedding,...). Used as x_enc=self.tokenizer(x=x_enc); enc_in=self.patch_embedding(x_enc, mask=...)."
+      },
+      {
+        "claim": "Backbone is a HuggingFace T5 encoder stack operating on inputs_embeds (not token ids)",
+        "evidence": "models/moment.py: imports T5Config, T5EncoderModel, T5Model; _get_transformer_backbone builds model_config=T5Config.from_dict(config.t5_config); chooses T5Model(model_config) if randomly_initialize_backbone else T5EncoderModel(model_config); then transformer_backbone = transformer_backbone.get_encoder(); forward calls self.encoder(inputs_embeds=enc_in, attention_mask=attention_mask)."
+      },
+      {
+        "claim": "Supports gradient checkpointing in the T5 encoder",
+        "evidence": "models/moment.py: if config.getattr('enable_gradient_checkpointing', True): transformer_backbone.gradient_checkpointing_enable()."
+      },
+      {
+        "claim": "Primary pretraining head reconstructs patches back to time domain with a linear projection to patch_len and flattening",
+        "evidence": "models/moment.py: class PretrainHead: Linear(d_model, patch_len); forward: x=self.linear(...); x=x.flatten(start_dim=2, end_dim=3). Used in _get_head when task_name == TASKS.RECONSTRUCTION."
+      },
+      {
+        "claim": "Forecasting head is a simple flatten + linear projection over all patch representations",
+        "evidence": "models/moment.py: class ForecastingHead: Flatten(start_dim=-2) then Linear(head_nf, forecast_horizon); _get_head computes head_nf = d_model * num_patches."
+      },
+      {
+        "claim": "Classification head pools over patch dimension and applies a linear classifier; supports 'mean' or 'concat' channel reduction",
+        "evidence": "models/moment.py: ClassificationHead.forward does x=torch.mean(x, dim=1) then Linear(...); classify() constructs enc_out either mean across channels or concat across channels (permute/reshape) before passing to head."
+      },
+      {
+        "claim": "Masked reconstruction uses an explicit mask generator and patch-view attention mask derived from input_mask",
+        "evidence": "models/moment.py: self.mask_generator = Masking(mask_ratio=...); reconstruction(): mask=self.mask_generator.generate_mask(...); attention_mask built from Masking.convert_seq_to_patch_view(input_mask, patch_len) and repeat_interleave over channels; patch_embedding called with mask=mask."
+      },
+      {
+        "claim": "Anomaly detection is implemented by reconstruction error scoring",
+        "evidence": "models/moment.py: detect_anomalies() calls reconstruct(), then anomaly_scores = get_anomaly_criterion(...)(x_enc, outputs.reconstruction)."
+      },
+      {
+        "claim": "Prompt-like conditioning is supported by concatenating prompt embeddings to patch embeddings and extending the attention mask",
+        "evidence": "models/moment.py reconstruct(): if 'prompt_embeds' in kwargs -> enc_in = self._cat_learned_embedding_to_input(prompt_embeds, enc_in) and attention_mask=self._extend_attention_mask(attention_mask, n_tokens); then enc_out = enc_out[:, n_tokens:, :]. (Helper method bodies not shown in provided snippet but calls are present.)"
+      },
+      {
+        "claim": "Can freeze embedder, encoder, and/or head parameters",
+        "evidence": "models/moment.py: flags freeze_embedder/freeze_encoder/freeze_head; applied via freeze_parameters(self.patch_embedding/self.encoder/self.head) which sets param.requires_grad=False."
+      }
+    ],
+    "Unknown / Not in Code": [
+      "Exact internal implementation of PatchEmbedding and Patching (e.g., whether PatchEmbedding is conv/linear, how positional embeddings are formed) is not shown in the provided text (imported from momentfm.models.layers.embed).",
+      "Exact RevIN details (per-channel statistics, affine parameterization behavior) are not shown in the provided text (imported from momentfm.models.layers.revin).",
+      "Exact masking policy (random vs block, mask token handling in PatchEmbedding) is not shown in the provided text (Masking imported from momentfm.utils.masking).",
+      "Helper methods _cat_learned_embedding_to_input and _extend_attention_mask are invoked but not defined in the provided snippet, so their exact behavior is not directly verifiable beyond their names and usage."
+    ]
+  },
+  "Inferred Suitability": {
+    "Strengths": [
+      {
+        "label": "General-purpose self-supervised representation learning for time series",
+        "why": "Implements masked reconstruction pretraining (Masking + PretrainHead) over patch tokens and provides an embed() API for extracting latent embeddings",
+        "conditions": "When large unlabeled time-series datasets are available and downstream tasks can benefit from transfer learning",
+        "confidence": "high"
+      },
+      {
+        "label": "Handling non-stationary scale/shift across samples",
+        "why": "RevIN normalization/denormalization wraps encoding and decoding, helping models trained across heterogeneous series",
+        "conditions": "When time series exhibit strong sample-wise distribution shifts (scale/mean changes) across batches or domains",
+        "confidence": "high"
+      },
+      {
+        "label": "Efficient sequence length reduction via patching",
+        "why": "Transformer operates on n_patches tokens rather than raw seq_len, reducing attention cost relative to per-timestep tokenization",
+        "conditions": "When seq_len is large and patch_len > 1, so n_patches << seq_len",
+        "confidence": "high"
+      },
+      {
+        "label": "Practical fine-tuning across tasks (forecast/classify/anomaly)",
+        "why": "Provides separate heads and task entry points (forecast(), classify(), detect_anomalies()) reusing the same encoder backbone",
+        "conditions": "When downstream tasks align with global sequence understanding rather than strict autoregressive generation",
+        "confidence": "medium"
+      }
+    ],
+    "Weaknesses": [
+      {
+        "label": "Limited cross-channel modeling",
+        "why": "Channels are encoded independently by reshaping to (batch * channels) and only combined via simple mean/concat reductions (no explicit multivariate attention across channels)",
+        "conditions": "When inter-channel dependencies are critical (e.g., strongly coupled multivariate sensors)",
+        "confidence": "high"
+      },
+      {
+        "label": "Forecasting head is simplistic for complex horizons",
+        "why": "Forecasting uses Flatten+Linear over all patch embeddings (no explicit temporal decoder, no autoregressive mechanism, no probabilistic output)",
+        "conditions": "When long-horizon forecasting requires structured temporal decoding or uncertainty estimates",
+        "confidence": "medium"
+      },
+      {
+        "label": "Transformer attention remains quadratic in number of patches",
+        "why": "T5 encoder self-attention is standard full attention over token length (n_patches), which scales O(n_patches^2)",
+        "conditions": "When patch stride is small and/or sequences are extremely long such that n_patches becomes large",
+        "confidence": "high"
+      },
+      {
+        "label": "Reconstruction pretraining objective may bias toward denoising rather than forecasting causality",
+        "why": "Masked reconstruction trains bidirectional context usage (encoder attention with full context) rather than strictly causal modeling",
+        "conditions": "When deployment requires causal/online forecasting without access to future context",
+        "confidence": "medium"
+      }
+    ]
+  },
+  "Resource Requirements & Complexity": "Backbone dominates parameters and compute: uses a T5 encoder stack whose parameter count depends on config.t5_config (comparable to FLAN-T5 sizes if matched). Compute/memory per forward scales roughly as O(B*C*n_patches^2*d_model) for self-attention plus O(B*C*n_patches*d_model^2) for MLP blocks. Patching reduces n_patches ~ (seq_len - patch_len)/stride + 1, trading temporal resolution for lower attention cost. Gradient checkpointing can reduce activation memory at the cost of extra compute. Heads are lightweight (single linear layers), with forecasting head having parameters O((d_model*n_patches)*forecast_horizon).",
+  "Paper Link": "None",
+  "_source_files": [
+    "models/moment.py"
+  ]
+}

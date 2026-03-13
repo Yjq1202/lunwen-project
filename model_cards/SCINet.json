@@ -1,0 +1,102 @@
+{
+  "model_name": "SCINet",
+  "Primary Task Type": "Time Series Forecasting (Long-term / Short-term)",
+  "Model Architecture Category": "CNN-based hierarchical multi-resolution architecture (SCINet-style splitting/interacting tree) with sinusoidal positional encoding",
+  "Core Mechanism & Structure": "A hierarchical, recursive sequence modeling network that repeatedly splits the input time series into even/odd subsequences, applies paired causal-style convolutional interaction blocks to exchange information between the two halves via multiplicative gating (exp of conv outputs) plus additive interaction terms, and then recursively processes each branch in a tree. The outputs are re-interleaved (“zip_up_the_pants”) back to the original temporal order. The full forecasting model first applies per-sample mean/std normalization (Non-stationary Transformer-style), adds fixed sinusoidal positional encoding, passes through 1 or 2 stacked SCINet trees with residual connections, and uses 1x1 Conv1d projections (acting across the time-length dimension) to produce a sequence of length (seq_len + pred_len), then de-normalizes back to the original scale.",
+  "Core Innovations": "1) Even/Odd splitting with recursive tree processing to capture multi-resolution temporal dependencies without attention (log-depth hierarchical mixing).\n2) Cross-branch interaction using multiplicative gating (x * exp(conv(other))) combined with additive interaction convs, resembling invertible coupling-style interactions for stable information exchange.\n3) Forecast head implemented via 1x1 Conv1d projections over the time axis, enabling length expansion to seq_len+pred_len (single stack) or iterative refinement (two stacks) with residual connections, plus explicit non-stationary normalization/de-normalization.",
+  "Key Technical Details": {
+    "Input Embedding": "No explicit embedding/projection layer for features; the model operates directly on x_enc of shape [B, T, C] where C=configs.enc_in, with optional fixed sinusoidal positional encoding added to x_enc.",
+    "Feature Extraction": "Recursive SCINet tree composed of SCIBlock modules. Each SCIBlock: split into even/odd time steps; apply four CausalConvBlock modules (two for multiplicative gating, two for additive interactions) using Conv1d(d_model->d_model) with ReplicationPad1d, LeakyReLU, Dropout, and Tanh; update rules: even_temp = even * exp(conv(odd)), odd_temp = odd * exp(conv(even)); then even_update = even_temp + conv(odd_temp), odd_update = odd_temp - conv(even_temp). Residual connections at stack level (dec_out += x_enc or dec_out += temp).",
+    "Positional Encoding": "Fixed sinusoidal positional encoding (sin/cos) generated in get_position_encoding() using registered buffer inv_timescales; added additively to x_enc before SCINet.",
+    "Non-stationarity Handling": "Explicit per-sample, per-channel normalization using mean and std over time (x_enc.mean(dim=1), var over dim=1) and de-normalization applied to the output, labeled in comments as 'Normalization from Non-stationary Transformer'."
+  },
+  "Evidence": {
+    "Direct Observations": [
+      {
+        "claim": "Implements an SCINet-style recursive even/odd splitting tree with interleaving reconstruction",
+        "evidence": "models/SCINet.py: class Splitting (even/odd), class SCINet recursively defines SCINet_Tree_even/odd when current_level!=0, and zip_up_the_pants() re-interleaves even/odd outputs."
+      },
+      {
+        "claim": "Core processing block uses convolutional interaction with multiplicative exp gating and additive interaction",
+        "evidence": "models/SCINet.py: SCIBlock.forward(): x_even_temp = x_even.mul(torch.exp(self.modules_even(x_odd))); x_odd_temp = x_odd.mul(torch.exp(self.modules_odd(x_even))); x_even_update = x_even_temp + self.interactor_even(x_odd_temp); x_odd_update = x_odd_temp - self.interactor_odd(x_even_temp)."
+      },
+      {
+        "claim": "Uses Conv1d-based blocks with ReplicationPad1d, LeakyReLU, Dropout, Tanh",
+        "evidence": "models/SCINet.py: class CausalConvBlock builds nn.Sequential([nn.ReplicationPad1d(...), nn.Conv1d(...), nn.LeakyReLU(...), nn.Dropout(...), nn.Conv1d(...), nn.Tanh()])."
+      },
+      {
+        "claim": "Forecasting is the only implemented task path",
+        "evidence": "models/SCINet.py: Model.forward(): only handles task_name in {'long_term_forecast','short_term_forecast'}; otherwise returns None."
+      },
+      {
+        "claim": "Applies per-sample mean/std normalization and de-normalization over the time dimension",
+        "evidence": "models/SCINet.py: Model.forecast(): means = x_enc.mean(1,...); stdev = sqrt(var(dim=1)+1e-5); x_enc = (x_enc-means)/stdev; later dec_out is scaled by stdev and shifted by means."
+      },
+      {
+        "claim": "Adds fixed sinusoidal positional encoding",
+        "evidence": "models/SCINet.py: Model.__init__() constructs inv_timescales buffer; get_position_encoding() builds sin/cos; forecast() adds pe to x_enc."
+      },
+      {
+        "claim": "Supports 1-stack or 2-stack SCINet with time-length projection via 1x1 Conv1d",
+        "evidence": "models/SCINet.py: Model.__init__(): if num_stacks==1 uses projection_1 = Conv1d(seq_len, seq_len+pred_len, kernel_size=1); else defines sci_net_1,sci_net_2 and projection_1=Conv1d(seq_len,pred_len,1) and projection_2=Conv1d(seq_len+pred_len, seq_len+pred_len,1). forecast() applies these and concatenates (x_enc, dec_out) for stack 2."
+      },
+      {
+        "claim": "Output returned from forward() is padded with zeros for the encoder-length part",
+        "evidence": "models/SCINet.py: Model.forward(): dec_out = forecast(...); dec_out = torch.cat([torch.zeros_like(x_enc), dec_out], dim=1)."
+      }
+    ],
+    "Unknown / Not in Code": [
+      "No explicit attention mechanism (self-attention/cross-attention) is present.",
+      "No explicit decoder that consumes x_dec or x_mark_*; these arguments are accepted by forward/forecast but not used in computations.",
+      "No explicit learnable temporal embedding for calendar/time features (x_mark_enc/x_mark_dec not used).",
+      "No RevIN module; normalization is implemented inline rather than via a RevIN class."
+    ]
+  },
+  "Inferred Suitability": {
+    "Strengths": [
+      {
+        "label": "Efficient long-sequence modeling without quadratic attention cost",
+        "why": "The model uses Conv1d blocks and recursive even/odd splitting rather than building an LxL attention matrix; computation scales roughly linearly with sequence length per level (plus log-depth recursion).",
+        "conditions": "When sequence length is large (e.g., hundreds to thousands) and attention-based models become memory-bound",
+        "confidence": "high"
+      },
+      {
+        "label": "Multi-resolution dependency capture",
+        "why": "Recursive decomposition into even/odd subsequences and processing in a tree encourages mixing information across multiple temporal scales.",
+        "conditions": "When signals contain both short-term fluctuations and longer seasonal/trend-like patterns",
+        "confidence": "medium"
+      },
+      {
+        "label": "Robustness to scale/shift changes in non-stationary series",
+        "why": "Explicit mean-variance normalization and later de-normalization can stabilize training under distribution shifts across time windows.",
+        "conditions": "When per-window statistics vary notably across samples/batches (non-stationary magnitude)",
+        "confidence": "medium"
+      }
+    ],
+    "Weaknesses": [
+      {
+        "label": "Limited use of exogenous/time-mark features",
+        "why": "x_mark_enc and x_mark_dec are never used, so calendar/time covariates cannot directly influence predictions.",
+        "conditions": "When forecasting requires strong dependence on known future covariates (e.g., holiday effects, planned interventions)",
+        "confidence": "high"
+      },
+      {
+        "label": "Potential causality leakage in convolutions",
+        "why": "CausalConvBlock uses ReplicationPad1d((k-1, k-1)) which pads both left and right, enabling access to future context within the convolution window (not strictly causal).",
+        "conditions": "When strict autoregressive/online forecasting is required (no look-ahead within the input context)",
+        "confidence": "high"
+      },
+      {
+        "label": "Output interface mismatch / redundant output construction",
+        "why": "forward() concatenates zeros_like(x_enc) with the forecast output, yielding length (2*seq_len + pred_len), which may not match common forecasting APIs expecting only pred_len (or seq_len+pred_len).",
+        "conditions": "When integrated into pipelines expecting standard output shapes (e.g., [B,pred_len,C] or [B,seq_len+pred_len,C])",
+        "confidence": "medium"
+      }
+    ]
+  },
+  "Resource Requirements & Complexity": "Let L=seq_len, C=enc_in, K=kernel_size (default 5), and tree depth D=current_level (default 3). Each CausalConvBlock contains two Conv1d(C->C, K) layers; each SCIBlock uses 4 such blocks (8 Conv1d total). Parameter count per SCIBlock is ~8*(C*C*K) (plus biases if enabled; here Conv1d uses default bias=True inside CausalConvBlock, while projection convs use bias=False). Compute is roughly O(B * L * C^2 * K * D) for one SCINet (since the tree processes all time points across levels), plus projection Conv1d cost dominated by O(B * (L or L+pred_len) * (L or pred_len) * C) because projections treat time as channels (Conv1d in_channels = L), which can become heavy when L is large. Memory is mainly activations for convs; no O(L^2) attention maps.",
+  "Paper Link": "None",
+  "_source_files": [
+    "models/SCINet.py"
+  ]
+}

@@ -1,0 +1,105 @@
+{
+  "model_name": "FiLM",
+  "Primary Task Type": "Long-/Short-term Time Series Forecasting (also supports Imputation / Anomaly Detection / Classification via task switch)",
+  "Model Architecture Category": "Spectral + State-Space/HiPPO-based (Fourier neural operator–style spectral convolution with HiPPO-Legendre projections); non-Transformer",
+  "Core Mechanism & Structure": "The model first applies per-sample normalization (mean/std over time) and a learnable affine re-scaling per channel. It then builds multiple multi-scale views of the recent history by cropping the last (scale × pred_len) timesteps. Each cropped segment is projected into a fixed-order HiPPO Legendre state (a linear state-space recursion discretized from continuous-time), producing a time-indexed coefficient sequence. A 1D spectral convolution (rFFT → complex linear mixing on low-frequency modes → irFFT) is applied to these HiPPO coefficient sequences, yielding filtered coefficient trajectories. The model selects a coefficient snapshot (typically aligned to pred_len) and reconstructs pred_len outputs by multiplying with a precomputed Legendre evaluation matrix. Predictions from several scales are stacked and fused with a small linear MLP (linear combiner across scales/windows). Finally, outputs are de-normalized back to the original scale.",
+  "Core Innovations": "1) HiPPO-Legendre state projection to compress long-range temporal information into a fixed-order coefficient/state representation before any learnable mixing. 2) SpectralConv1d operating in the frequency domain on HiPPO coefficient sequences (low-mode complex mixing) for efficient global filtering. 3) Multi-scale cropping (scales [1,2,4] × pred_len) with a simple learned fusion head to combine short/medium context into the final prediction.",
+  "Key Technical Details": {
+    "Input Embedding": "No token/patch embedding; directly uses raw multivariate values x_enc with (i) per-sample mean/std normalization over time and (ii) a learnable per-channel affine transform (affine_weight, affine_bias).",
+    "Feature Extraction": "HiPPO_LegT linear state-space recursion (c <- A c + B u) to produce Legendre coefficients over time, followed by SpectralConv1d: rFFT over time dimension of coefficients and learned complex weight mixing on a limited number of Fourier modes (modes=min(32, seq_len//2)), then irFFT. Multi-scale ensembles are fused by a linear layer over scale dimension.",
+    "Positional Encoding": "No explicit positional encoding. Temporal order is handled implicitly by the HiPPO recurrence and Fourier transforms.",
+    "Non-stationarity Handling": "Per-sample normalization (subtract mean over time, divide by std over time) with de-normalization at the end; plus learnable affine scaling/bias per channel (similar spirit to Non-stationary Transformer normalization, but implemented inline rather than via a RevIN module)."
+  },
+  "Evidence": {
+    "Direct Observations": [
+      {
+        "claim": "Implements HiPPO-Legendre projection as a discretized linear state-space (A,B) recurrence and uses it to transform inputs into Legendre coefficient sequences.",
+        "evidence": "In models/FiLM.py: class HiPPO_LegT uses signal.cont2discrete to create A,B buffers; forward() updates c via `c = F.linear(c, self.A) + new` where `new = f @ self.B`; reconstruct uses `eval_matrix @ c`."
+      },
+      {
+        "claim": "Uses frequency-domain (FFT) spectral convolution with learned complex weights on a subset of low-frequency modes.",
+        "evidence": "In models/FiLM.py: class SpectralConv1d forward(): `x_ft = torch.fft.rfft(x)`; only first `self.modes` are mixed via `compl_mul1d`; then `torch.fft.irfft`."
+      },
+      {
+        "claim": "Uses multi-scale context lengths [pred_len, 2*pred_len, 4*pred_len] and fuses scale outputs with a linear layer.",
+        "evidence": "In Model.__init__: `self.multiscale = [1, 2, 4]`; forward loops `for i in range(0, len(self.multiscale)*len(self.window_size))` and crops `x_in = x_enc[:, -x_in_len:]` where `x_in_len = multiscale * pred_len`; then `x_dec = torch.stack(x_decs, dim=-1)` and `self.mlp = nn.Linear(len(self.multiscale)*len(self.window_size), 1)` to fuse."
+      },
+      {
+        "claim": "Applies per-sample mean/std normalization over time and de-normalizes outputs (Non-stationary Transformer-style).",
+        "evidence": "In Model.forecast/imputation/anomaly_detection: `means = x_enc.mean(1, keepdim=True)`; `x_enc = x_enc - means`; `stdev = sqrt(var(...)+1e-5)`; `x_enc /= stdev`; later `x_dec = x_dec * stdev; x_dec = x_dec + means`."
+      },
+      {
+        "claim": "Has learnable per-channel affine scaling/bias applied to inputs and inverted on outputs.",
+        "evidence": "In Model.__init__: `affine_weight` and `affine_bias` are nn.Parameters with shape (1,1,enc_in). In forecast: `x_enc = x_enc * affine_weight + affine_bias`; after prediction: `x_dec = x_dec - affine_bias; x_dec = x_dec / (affine_weight + 1e-10)`."
+      },
+      {
+        "claim": "Supports multiple task modes via task_name switch: forecasting, imputation, anomaly detection, classification.",
+        "evidence": "In Model.forward: branches on `self.task_name` for 'long_term_forecast', 'short_term_forecast', 'imputation', 'anomaly_detection', 'classification'."
+      },
+      {
+        "claim": "Classification head gates features by x_mark_enc and uses a flattened linear projection to num_class.",
+        "evidence": "In Model.classification: `output = output * x_mark_enc.unsqueeze(-1)` then `output = output.reshape(output.shape[0], -1)` and `self.projection = nn.Linear(configs.enc_in * configs.seq_len, configs.num_class)`."
+      },
+      {
+        "claim": "No attention/Transformer encoder-decoder modules are implemented in this file.",
+        "evidence": "models/FiLM.py contains only HiPPO_LegT, SpectralConv1d, and Model; no MultiHeadAttention/TransformerEncoder layers, no attention score computation."
+      },
+      {
+        "claim": "Paper link is specified in the code docstring.",
+        "evidence": "In class Model docstring: `Paper link: https://arxiv.org/abs/2205.08897`."
+      }
+    ],
+    "Unknown / Not in Code": [
+      "Any explicit Transformer-style encoder/decoder stacks (despite configs.e_layers being present, it is not used to construct stacked blocks).",
+      "Any explicit masking logic for imputation (mask is accepted but not used in computation).",
+      "Any explicit time feature embedding (x_mark_enc/x_mark_dec are largely unused except as a multiplicative gate in classification)."
+    ]
+  },
+  "Inferred Suitability": {
+    "Strengths": [
+      {
+        "label": "Efficient long-context summarization",
+        "why": "HiPPO projects variable-length histories into fixed-order states, avoiding O(L^2) attention and enabling multi-scale conditioning using only recent windows.",
+        "conditions": "When sequences are long and global attention would be expensive; when relevant information can be captured by low-order Legendre/HiPPO states",
+        "confidence": "high"
+      },
+      {
+        "label": "Captures global periodic/seasonal structure",
+        "why": "SpectralConv1d performs frequency-domain mixing of low Fourier modes, which is well-suited to smooth/periodic components.",
+        "conditions": "When the data has strong periodicity/seasonality or smooth spectral characteristics; moderate noise",
+        "confidence": "high"
+      },
+      {
+        "label": "Robustness to scale shifts / non-stationarity",
+        "why": "Per-sample normalization (mean/std) with learned affine re-scaling reduces distribution shift across time windows.",
+        "conditions": "When series exhibits time-varying level/scale (e.g., different magnitudes across samples)",
+        "confidence": "medium"
+      }
+    ],
+    "Weaknesses": [
+      {
+        "label": "Limited expressivity for sharp events or highly local patterns",
+        "why": "Using only a small number of Fourier modes (<=32) and global spectral mixing may underfit high-frequency transients; HiPPO order is fixed (window_size=256).",
+        "conditions": "When predictions depend on abrupt spikes, change-points, or very high-frequency components",
+        "confidence": "medium"
+      },
+      {
+        "label": "Imputation mask is ignored",
+        "why": "The imputation() signature accepts mask but the computation does not use it, so missingness patterns are not explicitly handled.",
+        "conditions": "When missing values are frequent/structured and require mask-aware modeling or loss reweighting",
+        "confidence": "high"
+      },
+      {
+        "label": "Time-feature inputs are mostly unused for forecasting",
+        "why": "x_mark_enc/x_mark_dec are not used in forecast/imputation/anomaly_detection, so calendar/time covariates do not condition the forecast.",
+        "conditions": "When exogenous time features (hour/day/holiday) are essential drivers",
+        "confidence": "high"
+      }
+    ]
+  },
+  "Resource Requirements & Complexity": "Compute is dominated by (1) HiPPO recurrence over the cropped window length O(B * enc_in * x_in_len * N) with N=window_size(=256), and (2) rFFT/irFFT spectral conv on coefficient sequences roughly O(B * enc_in * N * x_in_len log x_in_len) but only mixing a small number of modes (<=32). Parameters are relatively small: per SpectralConv1d weights are (in_channels*out_channels*modes)*2 with in_channels=out_channels=256 and modes<=32; multiplied by number of multiscales (3). Memory is moderate since it avoids attention matrices, but HiPPO coefficient tensors can be sizable (B * enc_in * N * x_in_len) during the spectral conv step.",
+  "Paper Link": "https://arxiv.org/abs/2205.08897",
+  "_source_files": [
+    "models/FiLM.py"
+  ]
+}

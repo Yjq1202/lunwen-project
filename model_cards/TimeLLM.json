@@ -1,0 +1,121 @@
+{
+  "model_name": "TimeLLM",
+  "Primary Task Type": "Time Series Forecasting (Long-term and Short-term)",
+  "Model Architecture Category": "LLM-augmented Transformer (Prompt + Patch Embedding + Cross-Attention Reprogramming into a frozen pretrained LLM)",
+  "Core Mechanism & Structure": "The model performs multivariate time-series forecasting by (1) normalizing the input sequence, (2) constructing a natural-language prompt that encodes dataset/task description plus per-series statistics (min/max/median, trend, top-k autocorrelation lags), (3) converting the numeric time series into a sequence of patch tokens via patching + linear projection + sinusoidal positional encoding, (4) 'reprogramming' these patch tokens into the frozen LLM embedding space using a multi-head attention layer where queries come from time-series patch embeddings and keys/values come from a projected LLM vocabulary embedding table, (5) concatenating prompt token embeddings with the reprogrammed patch embeddings as `inputs_embeds` to a frozen pretrained LLM (LLaMA/GPT2/BERT), (6) taking the LLM hidden states (truncated to `d_ff`) and reshaping them back to per-variable representations, and (7) using a flatten+linear forecasting head to output the prediction horizon, followed by de-normalization back to the original scale.",
+  "Core Innovations": "Prompt-driven time-series conditioning: the forward pass creates per-(batch,variable) textual prompts containing descriptive metadata and computed statistics (trend + autocorrelation lags) to condition a pretrained LLM.\nReprogramming layer to bridge modalities: a dedicated multi-head attention module maps patch-embedded time-series tokens into the LLM hidden space by attending over a learnable projection of the LLM vocabulary embedding matrix.\nFrozen-LLM forecasting with patch tokens: the pretrained LLM is used as a fixed sequence model (parameters frozen) operating on concatenated prompt tokens and numeric patch tokens, while only lightweight adapters (patch embedding, mapping layer, reprogramming, head) are trained.",
+  "Key Technical Details": {
+    "Input Embedding": "Numeric time series is converted into patch tokens using `PatchEmbedding`: ReplicationPad1d + `unfold` into length-`patch_len` windows with `stride`, then linear projection `Linear(patch_len -> d_model)` plus sinusoidal positional embedding. Text prompt is tokenized by HF tokenizer and embedded via the LLM's input embedding layer. The final LLM input is `torch.cat([prompt_embeddings, reprogrammed_patch_embeddings], dim=1)` passed via `inputs_embeds`.",
+    "Feature Extraction": "Main sequence modeling is done by the frozen HuggingFace Transformer backbone (`LlamaModel` / `GPT2Model` / `BertModel`). A custom cross-attention-style `ReprogrammingLayer` performs multi-head scaled dot-product attention where Q comes from time-series patch embeddings and K/V come from a token-bank derived from LLM vocabulary embeddings (after a linear mapping). Output is projected to `d_llm` and fed to the LLM.",
+    "Positional Encoding": "Sinusoidal absolute positional embedding is added inside `PatchEmbedding` via `PositionalEmbedding` (sin/cos). The LLM’s native positional handling is not explicitly modified in code; prompts and patch tokens rely on the LLM’s internal behavior when using `inputs_embeds`.",
+    "Non-stationarity Handling": "Per-sample normalization and de-normalization using `layers/StandardNorm.py::Normalize` (RevIN-like). Statistics (mean/variance across time) are computed and detached; forward uses `mode='norm'` before modeling and `mode='denorm'` after prediction."
+  },
+  "Evidence": {
+    "Direct Observations": [
+      {
+        "claim": "Supports only forecasting tasks (long_term_forecast / short_term_forecast) and outputs last pred_len steps",
+        "evidence": "models/TimeLLM.py::Model.forward checks `self.task_name` for 'long_term_forecast' or 'short_term_forecast', calls `forecast`, and returns `dec_out[:, -self.pred_len:, :]`; otherwise raises NotImplementedError in __init__."
+      },
+      {
+        "claim": "Uses a frozen pretrained LLM backbone (LLaMA/GPT2/BERT) from HuggingFace Transformers",
+        "evidence": "models/TimeLLM.py imports `LlamaModel`, `GPT2Model`, `BertModel`; selects by `configs.llm_model`; then freezes all parameters via `for param in self.llm_model.parameters(): param.requires_grad = False`."
+      },
+      {
+        "claim": "Constructs text prompts containing dataset/task description and input statistics (min/max/median, trend, top-5 lags)",
+        "evidence": "models/TimeLLM.py::Model.forecast computes `min_values`, `max_values`, `medians`, `lags = self.calcute_lags(x_enc)`, `trends = x_enc.diff(dim=1).sum(dim=1)` and formats them into `prompt_ = (f\"<|start_prompt|>Dataset description: {self.description}\" ... f\"top 5 lags are : {lags_values_str}<|<end_prompt>|>\")`."
+      },
+      {
+        "claim": "Computes top-k autocorrelation lags using FFT",
+        "evidence": "models/TimeLLM.py::Model.calcute_lags uses `torch.fft.rfft`, multiplies by conjugate, `torch.fft.irfft` to get correlation, then `torch.topk(mean_value, self.top_k)`."
+      },
+      {
+        "claim": "Numeric input is embedded via patching (unfold) + linear projection + sinusoidal positional embedding",
+        "evidence": "layers/Embed.py::PatchEmbedding pads via `nn.ReplicationPad1d`, patches via `x.unfold(... size=self.patch_len, step=self.stride)`, projects by `self.value_embedding = nn.Linear(patch_len, d_model, bias=False)`, adds `PositionalEmbedding`."
+      },
+      {
+        "claim": "Has a custom multi-head attention 'ReprogrammingLayer' that maps time-series embeddings into the LLM space",
+        "evidence": "models/TimeLLM.py defines `ReprogrammingLayer` with `query_projection` (d_model->d_keys*n_heads), `key_projection`/`value_projection` (d_llm->d_keys*n_heads), and attention via `scores = torch.einsum(\"blhe,she->bhls\", ...)` followed by softmax and weighted sum."
+      },
+      {
+        "claim": "Uses the LLM vocabulary embedding matrix as a source token bank, projected to a smaller token set",
+        "evidence": "models/TimeLLM.py sets `self.word_embeddings = self.llm_model.get_input_embeddings().weight`, `self.mapping_layer = nn.Linear(self.vocab_size, self.num_tokens)`, then creates `source_embeddings = self.mapping_layer(self.word_embeddings.permute(1, 0)).permute(1, 0)`."
+      },
+      {
+        "claim": "Feeds the LLM using `inputs_embeds` by concatenating prompt embeddings and reprogrammed patch embeddings",
+        "evidence": "models/TimeLLM.py::Model.forecast computes `prompt_embeddings = self.llm_model.get_input_embeddings()(prompt...)`, then `llama_enc_out = torch.cat([prompt_embeddings, enc_out], dim=1)` and calls `self.llm_model(inputs_embeds=llama_enc_out).last_hidden_state`."
+      },
+      {
+        "claim": "Applies RevIN-like normalization/denormalization around the forecasting backbone",
+        "evidence": "models/TimeLLM.py instantiates `self.normalize_layers = Normalize(configs.enc_in, affine=False)` and in `forecast` calls `x_enc = self.normalize_layers(x_enc, 'norm')` and at end `dec_out = self.normalize_layers(dec_out, 'denorm')`. `layers/StandardNorm.py::Normalize` computes mean/variance over time dimensions and applies normalize/denormalize."
+      },
+      {
+        "claim": "Forecast head is a flatten + linear projection to pred_len per variable",
+        "evidence": "models/TimeLLM.py defines `FlattenHead` with `nn.Flatten(start_dim=-2)` and `nn.Linear(nf, target_window)`; used as `self.output_projection = FlattenHead(configs.enc_in, self.head_nf, self.pred_len, ...)` and applied to `dec_out`."
+      },
+      {
+        "claim": "Explicit sinusoidal positional embedding implementation exists and is used by PatchEmbedding",
+        "evidence": "layers/Embed.py::PositionalEmbedding constructs sin/cos table; PatchEmbedding adds `+ self.position_embedding(x)`."
+      }
+    ],
+    "Unknown / Not in Code": [
+      "Any explicit training objective/loss (e.g., MSE/MAE) is not shown in the provided files.",
+      "No explicit decoder module (in the encoder-decoder sense) beyond the frozen LLM forward and the linear head; no separate cross-attention with future tokens.",
+      "No explicit use of x_mark_enc/x_mark_dec in Model.forecast (they are passed but unused)."
+    ]
+  },
+  "Inferred Suitability": {
+    "Strengths": [
+      {
+        "label": "Strong conditioning via textual metadata and statistics",
+        "why": "Prompts embed dataset/task description plus per-series descriptive statistics and autocorrelation lags, potentially helping adapt behavior across datasets without changing the frozen LLM",
+        "conditions": "When dataset descriptions are meaningful and series exhibit recurring seasonalities captured by top-k lags",
+        "confidence": "medium"
+      },
+      {
+        "label": "Parameter-efficient adaptation of large pretrained Transformers",
+        "why": "LLM backbone is frozen; trainable parts are patch embedding, mapping layer, reprogramming layer, and the forecasting head",
+        "conditions": "When compute/memory budget allows running the frozen LLM forward but fine-tuning full LLM is infeasible",
+        "confidence": "high"
+      },
+      {
+        "label": "Handles non-stationary scale shifts better than plain Transformers",
+        "why": "Normalize/denormalize wrapper (RevIN-like) reduces distribution shift across batches/series by standardizing per-sample statistics",
+        "conditions": "When time series have varying scales/means across windows or across variables",
+        "confidence": "high"
+      }
+    ],
+    "Weaknesses": [
+      {
+        "label": "High inference cost and memory due to LLM backbone",
+        "why": "Uses a full pretrained Transformer (e.g., LLaMA-7B) with sequence length = prompt tokens + patch tokens; self-attention scales roughly O(L^2) in token length inside the LLM",
+        "conditions": "When using large backbones (LLaMA) or long prompts / many patches (large seq_len, small stride)",
+        "confidence": "high"
+      },
+      {
+        "label": "Limited use of temporal covariates / calendar features",
+        "why": "Although x_mark_enc/x_mark_dec are arguments, they are not used in forecast; temporal embeddings defined in layers/Embed.py are not used by this model",
+        "conditions": "When exogenous time features (holiday, hour-of-day, etc.) are important drivers",
+        "confidence": "high"
+      },
+      {
+        "label": "Potential mismatch between language pretraining and numeric forecasting",
+        "why": "The LLM is frozen and was pretrained on text; numeric information is injected via reprogramming and may not fully align with the LLM’s learned inductive biases",
+        "conditions": "When forecasting requires precise numeric extrapolation rather than pattern-based continuation",
+        "confidence": "medium"
+      },
+      {
+        "label": "Prompt construction overhead and per-variable prompting may be expensive",
+        "why": "Prompt is created for each (batch * variable) after reshaping to B*N; tokenization and embedding are done for that expanded batch",
+        "conditions": "When number of variables enc_in is large or batch size is large",
+        "confidence": "high"
+      }
+    ]
+  },
+  "Resource Requirements & Complexity": "Compute is dominated by the frozen LLM forward pass. Let P be number of patch tokens per variable (≈ (seq_len - patch_len)/stride + 2), V be number of variables, and Tp be prompt token length. The effective token length into the LLM is L ≈ Tp + P (note: the model flattens variables into the batch dimension for patch embedding, but concatenation with prompt embeddings is done at batch level after reshaping back to (B, V, T); prompt generation itself is per (B*V) series). LLM attention cost is roughly O(L^2 * d_llm * n_layers). Trainable parameters are relatively small: patch value projection (patch_len*d_model), mapping_layer (vocab_size*num_tokens), reprogramming projections (d_model/d_llm linear layers), and the FlattenHead. Memory footprint is large if using LLaMA-7B even with frozen weights; activations scale with L and number of layers. The code also casts patch embeddings to bfloat16 (`x_enc.to(torch.bfloat16)`) which can reduce activation memory for that path, but the LLM dtype is not explicitly set here.",
+  "Paper Link": "None",
+  "_source_files": [
+    "models/TimeLLM.py",
+    "layers/Embed.py",
+    "layers/StandardNorm.py"
+  ]
+}

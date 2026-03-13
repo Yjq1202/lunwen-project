@@ -1,0 +1,1738 @@
+{
+  "tfb_raw_tables": {
+    "benchmark_meta": {
+      "dataset_counts": {
+        "uts_series_count": {
+          "value": 8068,
+          "provenance": {
+            "source_type": "section",
+            "source_id": "Abstract",
+            "page": "unknown"
+          }
+        },
+        "mts_dataset_count": {
+          "value": 25,
+          "provenance": {
+            "source_type": "section",
+            "source_id": "Abstract",
+            "page": "unknown"
+          }
+        },
+        "uts_methods_count": {
+          "value": 21,
+          "provenance": {
+            "source_type": "section",
+            "source_id": "Abstract",
+            "page": "unknown"
+          }
+        },
+        "mts_methods_count": {
+          "value": 14,
+          "provenance": {
+            "source_type": "section",
+            "source_id": "Abstract",
+            "page": "unknown"
+          }
+        }
+      },
+      "domain_count": {
+        "value": 10,
+        "provenance": {
+          "source_type": "section",
+          "source_id": "Abstract",
+          "page": "unknown"
+        }
+      },
+      "domains_list": {
+        "value": [
+          "traffic",
+          "electricity",
+          "energy",
+          "environment",
+          "nature",
+          "economic",
+          "stock markets",
+          "banking",
+          "health",
+          "web"
+        ],
+        "provenance": {
+          "source_type": "section",
+          "source_id": "Abstract",
+          "page": "unknown"
+        }
+      },
+      "evaluation_strategies": {
+        "value": [
+          "Fixed forecasting",
+          "Rolling forecasting"
+        ],
+        "provenance": {
+          "source_type": "section",
+          "source_id": "Section 4.3.1 Evaluation strategies",
+          "page": "unknown"
+        }
+      },
+      "mts_evaluation_strategy_used_in_experiments": {
+        "value": "Rolling forecasting",
+        "provenance": {
+          "source_type": "section",
+          "source_id": "Section 5.1.2 Implementation details",
+          "page": "unknown"
+        }
+      },
+      "uts_evaluation_strategy_used_in_experiments": {
+        "value": "Fixed forecasting",
+        "provenance": {
+          "source_type": "section",
+          "source_id": "Section 5.1.2 Implementation details",
+          "page": "unknown"
+        }
+      },
+      "metrics_mts_reported_in_results_tables": {
+        "value": [
+          "MAE on normalized data",
+          "MSE on normalized data"
+        ],
+        "provenance": {
+          "source_type": "section",
+          "source_id": "Section 5.2.2 Multivariate time series forecasting",
+          "page": "unknown"
+        }
+      },
+      "metrics_catalog": {
+        "value": [
+          "MAE",
+          "MAPE",
+          "MSE",
+          "SMAPE",
+          "RMSE",
+          "WAPE",
+          "MSMAPE",
+          "MASE"
+        ],
+        "provenance": {
+          "source_type": "section",
+          "source_id": "Section 4.3.2 Evaluation metrics",
+          "page": "unknown"
+        }
+      },
+      "splitting_protocol_mts": {
+        "value": "fixed chronological split ratio per dataset: 7:1:2 or 6:2:2 for train:val:test",
+        "provenance": {
+          "source_type": "section",
+          "source_id": "Section 4.1.1 Dataset overview (Multivariate time series)",
+          "page": "unknown"
+        }
+      },
+      "horizons_mts": {
+        "value": {
+          "short_length_datasets": {
+            "datasets": [
+              "FRED-MD",
+              "NASDAQ",
+              "NYSE",
+              "NN5",
+              "ILI",
+              "Covid-19",
+              "Wike2000"
+            ],
+            "horizons": [
+              24,
+              36,
+              48,
+              60
+            ]
+          },
+          "other_datasets": {
+            "horizons": [
+              96,
+              192,
+              336,
+              720
+            ]
+          }
+        },
+        "provenance": {
+          "source_type": "section",
+          "source_id": "Section 5.1.2 Implementation details",
+          "page": "unknown"
+        }
+      },
+      "lookback_windows_mts": {
+        "value": {
+          "short_length_datasets": {
+            "datasets": [
+              "FRED-MD",
+              "NASDAQ",
+              "NYSE",
+              "NN5",
+              "ILI",
+              "Covid-19",
+              "Wike2000"
+            ],
+            "lookback_H_tested": [
+              36,
+              104
+            ]
+          },
+          "other_datasets": {
+            "lookback_H_tested": [
+              96,
+              336,
+              512
+            ]
+          }
+        },
+        "provenance": {
+          "source_type": "section",
+          "source_id": "Section 5.1.2 Implementation details",
+          "page": "unknown"
+        }
+      },
+      "uts_forecasting_horizons_and_lookback": {
+        "value": {
+          "horizons_range": [
+            6,
+            48
+          ],
+          "lookback_rule": "H set to 1.25 times forecasting horizon F"
+        },
+        "provenance": {
+          "source_type": "section",
+          "source_id": "Section 5.1.2 Implementation details",
+          "page": "unknown"
+        }
+      },
+      "testing_drop_last": {
+        "value": "not used",
+        "provenance": {
+          "source_type": "section",
+          "source_id": "Section 5.1.2 Implementation details",
+          "page": "unknown"
+        }
+      }
+    },
+    "mts_datasets": [
+      {
+        "dataset": "METR-LA",
+        "domain": "Traffic",
+        "freq": "5 mins",
+        "length": 34272,
+        "dim": 207,
+        "split": "7:1:2",
+        "provenance": {
+          "source_type": "table",
+          "source_id": "Table 5",
+          "page": "unknown",
+          "row": "METR-LA",
+          "col": "Dataset/Domain/Frequency/Lengths/Dim/Split"
+        }
+      },
+      {
+        "dataset": "PEMS-BAY",
+        "domain": "Traffic",
+        "freq": "5 mins",
+        "length": 52116,
+        "dim": 325,
+        "split": "7:1:2",
+        "provenance": {
+          "source_type": "table",
+          "source_id": "Table 5",
+          "page": "unknown",
+          "row": "PEMS-BAY",
+          "col": "Dataset/Domain/Frequency/Lengths/Dim/Split"
+        }
+      },
+      {
+        "dataset": "PEMS04",
+        "domain": "Traffic",
+        "freq": "5 mins",
+        "length": 16992,
+        "dim": 307,
+        "split": "6:2:2",
+        "provenance": {
+          "source_type": "table",
+          "source_id": "Table 5",
+          "page": "unknown",
+          "row": "PEMS04",
+          "col": "Dataset/Domain/Frequency/Lengths/Dim/Split"
+        }
+      },
+      {
+        "dataset": "PEMS08",
+        "domain": "Traffic",
+        "freq": "5 mins",
+        "length": 17856,
+        "dim": 170,
+        "split": "6:2:2",
+        "provenance": {
+          "source_type": "table",
+          "source_id": "Table 5",
+          "page": "unknown",
+          "row": "PEMS08",
+          "col": "Dataset/Domain/Frequency/Lengths/Dim/Split"
+        }
+      },
+      {
+        "dataset": "Traffic",
+        "domain": "Traffic",
+        "freq": "1 hour",
+        "length": 17544,
+        "dim": 862,
+        "split": "7:1:2",
+        "provenance": {
+          "source_type": "table",
+          "source_id": "Table 5",
+          "page": "unknown",
+          "row": "Traffic",
+          "col": "Dataset/Domain/Frequency/Lengths/Dim/Split"
+        }
+      },
+      {
+        "dataset": "ETTh1",
+        "domain": "Electricity",
+        "freq": "1 hour",
+        "length": 14400,
+        "dim": 7,
+        "split": "6:2:2",
+        "provenance": {
+          "source_type": "table",
+          "source_id": "Table 5",
+          "page": "unknown",
+          "row": "ETTh1",
+          "col": "Dataset/Domain/Frequency/Lengths/Dim/Split"
+        }
+      },
+      {
+        "dataset": "ETTh2",
+        "domain": "Electricity",
+        "freq": "1 hour",
+        "length": 14400,
+        "dim": 7,
+        "split": "6:2:2",
+        "provenance": {
+          "source_type": "table",
+          "source_id": "Table 5",
+          "page": "unknown",
+          "row": "ETTh2",
+          "col": "Dataset/Domain/Frequency/Lengths/Dim/Split"
+        }
+      },
+      {
+        "dataset": "ETTm1",
+        "domain": "Electricity",
+        "freq": "15 mins",
+        "length": 57600,
+        "dim": 7,
+        "split": "6:2:2",
+        "provenance": {
+          "source_type": "table",
+          "source_id": "Table 5",
+          "page": "unknown",
+          "row": "ETTm1",
+          "col": "Dataset/Domain/Frequency/Lengths/Dim/Split"
+        }
+      },
+      {
+        "dataset": "ETTm2",
+        "domain": "Electricity",
+        "freq": "15 mins",
+        "length": 57600,
+        "dim": 7,
+        "split": "6:2:2",
+        "provenance": {
+          "source_type": "table",
+          "source_id": "Table 5",
+          "page": "unknown",
+          "row": "ETTm2",
+          "col": "Dataset/Domain/Frequency/Lengths/Dim/Split"
+        }
+      },
+      {
+        "dataset": "Electricity",
+        "domain": "Electricity",
+        "freq": "1 hour",
+        "length": 26304,
+        "dim": 321,
+        "split": "7:1:2",
+        "provenance": {
+          "source_type": "table",
+          "source_id": "Table 5",
+          "page": "unknown",
+          "row": "Electricity",
+          "col": "Dataset/Domain/Frequency/Lengths/Dim/Split"
+        }
+      },
+      {
+        "dataset": "Solar",
+        "domain": "Energy",
+        "freq": "10 mins",
+        "length": 52560,
+        "dim": 137,
+        "split": "6:2:2",
+        "provenance": {
+          "source_type": "table",
+          "source_id": "Table 5",
+          "page": "unknown",
+          "row": "Solar",
+          "col": "Dataset/Domain/Frequency/Lengths/Dim/Split"
+        }
+      },
+      {
+        "dataset": "Wind",
+        "domain": "Energy",
+        "freq": "15 mins",
+        "length": 48673,
+        "dim": 7,
+        "split": "7:1:2",
+        "provenance": {
+          "source_type": "table",
+          "source_id": "Table 5",
+          "page": "unknown",
+          "row": "Wind",
+          "col": "Dataset/Domain/Frequency/Lengths/Dim/Split"
+        }
+      },
+      {
+        "dataset": "Weather",
+        "domain": "Environment",
+        "freq": "10 mins",
+        "length": 52696,
+        "dim": 21,
+        "split": "7:1:2",
+        "provenance": {
+          "source_type": "table",
+          "source_id": "Table 5",
+          "page": "unknown",
+          "row": "Weather",
+          "col": "Dataset/Domain/Frequency/Lengths/Dim/Split"
+        }
+      },
+      {
+        "dataset": "AQShunyi",
+        "domain": "Environment",
+        "freq": "1 hour",
+        "length": 35064,
+        "dim": 11,
+        "split": "6:2:2",
+        "provenance": {
+          "source_type": "table",
+          "source_id": "Table 5",
+          "page": "unknown",
+          "row": "AQShunyi",
+          "col": "Dataset/Domain/Frequency/Lengths/Dim/Split"
+        }
+      },
+      {
+        "dataset": "AQWan",
+        "domain": "Environment",
+        "freq": "1 hour",
+        "length": 35064,
+        "dim": 11,
+        "split": "6:2:2",
+        "provenance": {
+          "source_type": "table",
+          "source_id": "Table 5",
+          "page": "unknown",
+          "row": "AQWan",
+          "col": "Dataset/Domain/Frequency/Lengths/Dim/Split"
+        }
+      },
+      {
+        "dataset": "ZafNoo",
+        "domain": "Nature",
+        "freq": "30 mins",
+        "length": 19225,
+        "dim": 11,
+        "split": "7:1:2",
+        "provenance": {
+          "source_type": "table",
+          "source_id": "Table 5",
+          "page": "unknown",
+          "row": "ZafNoo",
+          "col": "Dataset/Domain/Frequency/Lengths/Dim/Split"
+        }
+      },
+      {
+        "dataset": "CzeLan",
+        "domain": "Nature",
+        "freq": "30 mins",
+        "length": 19934,
+        "dim": 11,
+        "split": "7:1:2",
+        "provenance": {
+          "source_type": "table",
+          "source_id": "Table 5",
+          "page": "unknown",
+          "row": "CzeLan",
+          "col": "Dataset/Domain/Frequency/Lengths/Dim/Split"
+        }
+      },
+      {
+        "dataset": "FRED-MD",
+        "domain": "Economic",
+        "freq": "1 month",
+        "length": 728,
+        "dim": 107,
+        "split": "7:1:2",
+        "provenance": {
+          "source_type": "table",
+          "source_id": "Table 5",
+          "page": "unknown",
+          "row": "FRED-MD",
+          "col": "Dataset/Domain/Frequency/Lengths/Dim/Split"
+        }
+      },
+      {
+        "dataset": "Exchange",
+        "domain": "Economic",
+        "freq": "1 day",
+        "length": 7588,
+        "dim": 8,
+        "split": "7:1:2",
+        "provenance": {
+          "source_type": "table",
+          "source_id": "Table 5",
+          "page": "unknown",
+          "row": "Exchange",
+          "col": "Dataset/Domain/Frequency/Lengths/Dim/Split"
+        }
+      },
+      {
+        "dataset": "NASDAQ",
+        "domain": "Stock",
+        "freq": "1 day",
+        "length": 1244,
+        "dim": 5,
+        "split": "7:1:2",
+        "provenance": {
+          "source_type": "table",
+          "source_id": "Table 5",
+          "page": "unknown",
+          "row": "NASDAQ",
+          "col": "Dataset/Domain/Frequency/Lengths/Dim/Split"
+        }
+      },
+      {
+        "dataset": "NYSE",
+        "domain": "Stock",
+        "freq": "1 day",
+        "length": 1243,
+        "dim": 5,
+        "split": "7:1:2",
+        "provenance": {
+          "source_type": "table",
+          "source_id": "Table 5",
+          "page": "unknown",
+          "row": "NYSE",
+          "col": "Dataset/Domain/Frequency/Lengths/Dim/Split"
+        }
+      },
+      {
+        "dataset": "NN5",
+        "domain": "Banking",
+        "freq": "1 day",
+        "length": 791,
+        "dim": 111,
+        "split": "7:1:2",
+        "provenance": {
+          "source_type": "table",
+          "source_id": "Table 5",
+          "page": "unknown",
+          "row": "NN5",
+          "col": "Dataset/Domain/Frequency/Lengths/Dim/Split"
+        }
+      },
+      {
+        "dataset": "ILI",
+        "domain": "Health",
+        "freq": "1 week",
+        "length": 966,
+        "dim": 7,
+        "split": "7:1:2",
+        "provenance": {
+          "source_type": "table",
+          "source_id": "Table 5",
+          "page": "unknown",
+          "row": "ILI",
+          "col": "Dataset/Domain/Frequency/Lengths/Dim/Split"
+        }
+      },
+      {
+        "dataset": "Covid-19",
+        "domain": "Health",
+        "freq": "1 day",
+        "length": 1392,
+        "dim": 948,
+        "split": "7:1:2",
+        "provenance": {
+          "source_type": "table",
+          "source_id": "Table 5",
+          "page": "unknown",
+          "row": "Covid-19",
+          "col": "Dataset/Domain/Frequency/Lengths/Dim/Split"
+        }
+      },
+      {
+        "dataset": "Wike2000",
+        "domain": "Web",
+        "freq": "1 day",
+        "length": 792,
+        "dim": 2000,
+        "split": "7:1:2",
+        "provenance": {
+          "source_type": "table",
+          "source_id": "Table 5",
+          "page": "unknown",
+          "row": "Wike2000",
+          "col": "Dataset/Domain/Frequency/Lengths/Dim/Split"
+        }
+      }
+    ],
+    "methods": [
+      {
+        "method": "ARIMA",
+        "category": "Statistical",
+        "subcategory": "Other",
+        "provenance": {
+          "source_type": "section",
+          "source_id": "Section 4.2 Comparison Methods",
+          "page": "unknown"
+        }
+      },
+      {
+        "method": "ETS",
+        "category": "Statistical",
+        "subcategory": "Other",
+        "provenance": {
+          "source_type": "section",
+          "source_id": "Section 4.2 Comparison Methods",
+          "page": "unknown"
+        }
+      },
+      {
+        "method": "KF",
+        "category": "Statistical",
+        "subcategory": "Other",
+        "provenance": {
+          "source_type": "section",
+          "source_id": "Section 4.2 Comparison Methods",
+          "page": "unknown"
+        }
+      },
+      {
+        "method": "VAR",
+        "category": "Statistical",
+        "subcategory": "Other",
+        "provenance": {
+          "source_type": "section",
+          "source_id": "Section 4.2 Comparison Methods",
+          "page": "unknown"
+        }
+      },
+      {
+        "method": "XGB",
+        "category": "MachineLearning",
+        "subcategory": "Tree",
+        "provenance": {
+          "source_type": "section",
+          "source_id": "Section 4.2 Comparison Methods",
+          "page": "unknown"
+        }
+      },
+      {
+        "method": "LR",
+        "category": "MachineLearning",
+        "subcategory": "Linear",
+        "provenance": {
+          "source_type": "section",
+          "source_id": "Section 4.2 Comparison Methods",
+          "page": "unknown"
+        }
+      },
+      {
+        "method": "RF",
+        "category": "MachineLearning",
+        "subcategory": "Tree",
+        "provenance": {
+          "source_type": "section",
+          "source_id": "Section 4.2 Comparison Methods",
+          "page": "unknown"
+        }
+      },
+      {
+        "method": "RNN",
+        "category": "DeepLearning",
+        "subcategory": "RNN",
+        "provenance": {
+          "source_type": "section",
+          "source_id": "Section 4.2 Comparison Methods",
+          "page": "unknown"
+        }
+      },
+      {
+        "method": "MICN",
+        "category": "DeepLearning",
+        "subcategory": "CNN",
+        "provenance": {
+          "source_type": "section",
+          "source_id": "Section 4.2 Comparison Methods",
+          "page": "unknown"
+        }
+      },
+      {
+        "method": "TimesNet",
+        "category": "DeepLearning",
+        "subcategory": "CNN",
+        "provenance": {
+          "source_type": "section",
+          "source_id": "Section 4.2 Comparison Methods",
+          "page": "unknown"
+        }
+      },
+      {
+        "method": "TCN",
+        "category": "DeepLearning",
+        "subcategory": "CNN",
+        "provenance": {
+          "source_type": "section",
+          "source_id": "Section 4.2 Comparison Methods",
+          "page": "unknown"
+        }
+      },
+      {
+        "method": "NLinear",
+        "category": "DeepLearning",
+        "subcategory": "MLP",
+        "provenance": {
+          "source_type": "section",
+          "source_id": "Section 4.2 Comparison Methods",
+          "page": "unknown"
+        }
+      },
+      {
+        "method": "DLinear",
+        "category": "DeepLearning",
+        "subcategory": "MLP",
+        "provenance": {
+          "source_type": "section",
+          "source_id": "Section 4.2 Comparison Methods",
+          "page": "unknown"
+        }
+      },
+      {
+        "method": "TiDE",
+        "category": "DeepLearning",
+        "subcategory": "MLP",
+        "provenance": {
+          "source_type": "section",
+          "source_id": "Section 4.2 Comparison Methods",
+          "page": "unknown"
+        }
+      },
+      {
+        "method": "N-HiTS",
+        "category": "DeepLearning",
+        "subcategory": "MLP",
+        "provenance": {
+          "source_type": "section",
+          "source_id": "Section 4.2 Comparison Methods",
+          "page": "unknown"
+        }
+      },
+      {
+        "method": "N-BEATS",
+        "category": "DeepLearning",
+        "subcategory": "MLP",
+        "provenance": {
+          "source_type": "section",
+          "source_id": "Section 4.2 Comparison Methods",
+          "page": "unknown"
+        }
+      },
+      {
+        "method": "PatchTST",
+        "category": "DeepLearning",
+        "subcategory": "Transformer",
+        "provenance": {
+          "source_type": "section",
+          "source_id": "Section 4.2 Comparison Methods",
+          "page": "unknown"
+        }
+      },
+      {
+        "method": "Crossformer",
+        "category": "DeepLearning",
+        "subcategory": "Transformer",
+        "provenance": {
+          "source_type": "section",
+          "source_id": "Section 4.2 Comparison Methods",
+          "page": "unknown"
+        }
+      },
+      {
+        "method": "FEDformer",
+        "category": "DeepLearning",
+        "subcategory": "Transformer",
+        "provenance": {
+          "source_type": "section",
+          "source_id": "Section 4.2 Comparison Methods",
+          "page": "unknown"
+        }
+      },
+      {
+        "method": "Stationary",
+        "category": "DeepLearning",
+        "subcategory": "Transformer",
+        "provenance": {
+          "source_type": "section",
+          "source_id": "Section 4.2 Comparison Methods",
+          "page": "unknown"
+        }
+      },
+      {
+        "method": "Informer",
+        "category": "DeepLearning",
+        "subcategory": "Transformer",
+        "provenance": {
+          "source_type": "section",
+          "source_id": "Section 4.2 Comparison Methods",
+          "page": "unknown"
+        }
+      },
+      {
+        "method": "Triformer",
+        "category": "DeepLearning",
+        "subcategory": "Transformer",
+        "provenance": {
+          "source_type": "section",
+          "source_id": "Section 4.2 Comparison Methods",
+          "page": "unknown"
+        }
+      },
+      {
+        "method": "FiLM",
+        "category": "DeepLearning",
+        "subcategory": "Other",
+        "provenance": {
+          "source_type": "section",
+          "source_id": "Section 4.2 Comparison Methods",
+          "page": "unknown"
+        }
+      }
+    ],
+    "mts_results": {
+      "PEMS04": {
+        "96": {
+          "PatchTST": {
+            "mae": 0.28,
+            "mse": 0.161,
+            "provenance": {
+              "source_type": "table",
+              "source_id": "Table 7",
+              "page": "unknown",
+              "row": "PEMS04",
+              "col": "96"
+            }
+          },
+          "Crossformer": {
+            "mae": 0.224,
+            "mse": 0.112,
+            "provenance": {
+              "source_type": "table",
+              "source_id": "Table 7",
+              "page": "unknown",
+              "row": "PEMS04",
+              "col": "96"
+            }
+          },
+          "FEDformer": {
+            "mae": 0.565,
+            "mse": 0.573,
+            "provenance": {
+              "source_type": "table",
+              "source_id": "Table 7",
+              "page": "unknown",
+              "row": "PEMS04",
+              "col": "96"
+            }
+          },
+          "Informer": {
+            "mae": 0.304,
+            "mse": 0.189,
+            "provenance": {
+              "source_type": "table",
+              "source_id": "Table 7",
+              "page": "unknown",
+              "row": "PEMS04",
+              "col": "96"
+            }
+          },
+          "Triformer": {
+            "mae": 0.325,
+            "mse": 0.218,
+            "provenance": {
+              "source_type": "table",
+              "source_id": "Table 7",
+              "page": "unknown",
+              "row": "PEMS04",
+              "col": "96"
+            }
+          },
+          "DLinear": {
+            "mae": 0.296,
+            "mse": 0.196,
+            "provenance": {
+              "source_type": "table",
+              "source_id": "Table 7",
+              "page": "unknown",
+              "row": "PEMS04",
+              "col": "96"
+            }
+          },
+          "NLinear": {
+            "mae": 0.294,
+            "mse": 0.202,
+            "provenance": {
+              "source_type": "table",
+              "source_id": "Table 7",
+              "page": "unknown",
+              "row": "PEMS04",
+              "col": "96"
+            }
+          },
+          "MICN": {
+            "mae": 0.318,
+            "mse": 0.199,
+            "provenance": {
+              "source_type": "table",
+              "source_id": "Table 7",
+              "page": "unknown",
+              "row": "PEMS04",
+              "col": "96"
+            }
+          },
+          "TimesNet": {
+            "mae": 0.266,
+            "mse": 0.159,
+            "provenance": {
+              "source_type": "table",
+              "source_id": "Table 7",
+              "page": "unknown",
+              "row": "PEMS04",
+              "col": "96"
+            }
+          },
+          "TCN": {
+            "mae": 0.291,
+            "mse": 0.168,
+            "provenance": {
+              "source_type": "table",
+              "source_id": "Table 7",
+              "page": "unknown",
+              "row": "PEMS04",
+              "col": "96"
+            }
+          },
+          "FiLM": {
+            "mae": 0.297,
+            "mse": 0.204,
+            "provenance": {
+              "source_type": "table",
+              "source_id": "Table 7",
+              "page": "unknown",
+              "row": "PEMS04",
+              "col": "96"
+            }
+          },
+          "RNN": {
+            "mae": 0.916,
+            "mse": 1.318,
+            "provenance": {
+              "source_type": "table",
+              "source_id": "Table 7",
+              "page": "unknown",
+              "row": "PEMS04",
+              "col": "96"
+            }
+          },
+          "LR": {
+            "mae": 0.474,
+            "mse": 0.423,
+            "provenance": {
+              "source_type": "table",
+              "source_id": "Table 7",
+              "page": "unknown",
+              "row": "PEMS04",
+              "col": "96"
+            }
+          },
+          "VAR": {
+            "mae": 0.313,
+            "mse": 0.192,
+            "provenance": {
+              "source_type": "table",
+              "source_id": "Table 7",
+              "page": "unknown",
+              "row": "PEMS04",
+              "col": "96"
+            }
+          }
+        },
+        "192": {
+          "PatchTST": {
+            "mae": 0.29,
+            "mse": 0.178,
+            "provenance": {
+              "source_type": "table",
+              "source_id": "Table 7",
+              "page": "unknown",
+              "row": "PEMS04",
+              "col": "192"
+            }
+          },
+          "Crossformer": {
+            "mae": 0.236,
+            "mse": 0.134,
+            "provenance": {
+              "source_type": "table",
+              "source_id": "Table 7",
+              "page": "unknown",
+              "row": "PEMS04",
+              "col": "192"
+            }
+          },
+          "FEDformer": {
+            "mae": 0.624,
+            "mse": 0.655,
+            "provenance": {
+              "source_type": "table",
+              "source_id": "Table 7",
+              "page": "unknown",
+              "row": "PEMS04",
+              "col": "192"
+            }
+          },
+          "Informer": {
+            "mae": 0.335,
+            "mse": 0.229,
+            "provenance": {
+              "source_type": "table",
+              "source_id": "Table 7",
+              "page": "unknown",
+              "row": "PEMS04",
+              "col": "192"
+            }
+          },
+          "Triformer": {
+            "mae": 0.353,
+            "mse": 0.257,
+            "provenance": {
+              "source_type": "table",
+              "source_id": "Table 7",
+              "page": "unknown",
+              "row": "PEMS04",
+              "col": "192"
+            }
+          },
+          "DLinear": {
+            "mae": 0.31,
+            "mse": 0.213,
+            "provenance": {
+              "source_type": "table",
+              "source_id": "Table 7",
+              "page": "unknown",
+              "row": "PEMS04",
+              "col": "192"
+            }
+          },
+          "NLinear": {
+            "mae": 0.305,
+            "mse": 0.223,
+            "provenance": {
+              "source_type": "table",
+              "source_id": "Table 7",
+              "page": "unknown",
+              "row": "PEMS04",
+              "col": "192"
+            }
+          },
+          "MICN": {
+            "mae": 0.38,
+            "mse": 0.29,
+            "provenance": {
+              "source_type": "table",
+              "source_id": "Table 7",
+              "page": "unknown",
+              "row": "PEMS04",
+              "col": "192"
+            }
+          },
+          "TimesNet": {
+            "mae": 0.282,
+            "mse": 0.179,
+            "provenance": {
+              "source_type": "table",
+              "source_id": "Table 7",
+              "page": "unknown",
+              "row": "PEMS04",
+              "col": "192"
+            }
+          },
+          "TCN": {
+            "mae": 0.303,
+            "mse": 0.188,
+            "provenance": {
+              "source_type": "table",
+              "source_id": "Table 7",
+              "page": "unknown",
+              "row": "PEMS04",
+              "col": "192"
+            }
+          },
+          "FiLM": {
+            "mae": 0.307,
+            "mse": 0.219,
+            "provenance": {
+              "source_type": "table",
+              "source_id": "Table 7",
+              "page": "unknown",
+              "row": "PEMS04",
+              "col": "192"
+            }
+          },
+          "RNN": {
+            "mae": 0.933,
+            "mse": 1.359,
+            "provenance": {
+              "source_type": "table",
+              "source_id": "Table 7",
+              "page": "unknown",
+              "row": "PEMS04",
+              "col": "192"
+            }
+          },
+          "LR": {
+            "mae": 0.497,
+            "mse": 0.465,
+            "provenance": {
+              "source_type": "table",
+              "source_id": "Table 7",
+              "page": "unknown",
+              "row": "PEMS04",
+              "col": "192"
+            }
+          },
+          "VAR": {
+            "mae": 0.336,
+            "mse": 0.216,
+            "provenance": {
+              "source_type": "table",
+              "source_id": "Table 7",
+              "page": "unknown",
+              "row": "PEMS04",
+              "col": "192"
+            }
+          }
+        },
+        "336": {
+          "PatchTST": {
+            "mae": 0.302,
+            "mse": 0.193,
+            "provenance": {
+              "source_type": "table",
+              "source_id": "Table 7",
+              "page": "unknown",
+              "row": "PEMS04",
+              "col": "336"
+            }
+          },
+          "Crossformer": {
+            "mae": 0.286,
+            "mse": 0.19,
+            "provenance": {
+              "source_type": "table",
+              "source_id": "Table 7",
+              "page": "unknown",
+              "row": "PEMS04",
+              "col": "336"
+            }
+          },
+          "FEDformer": {
+            "mae": 0.92,
+            "mse": 1.365,
+            "provenance": {
+              "source_type": "table",
+              "source_id": "Table 7",
+              "page": "unknown",
+              "row": "PEMS04",
+              "col": "336"
+            }
+          },
+          "Informer": {
+            "mae": 0.323,
+            "mse": 0.217,
+            "provenance": {
+              "source_type": "table",
+              "source_id": "Table 7",
+              "page": "unknown",
+              "row": "PEMS04",
+              "col": "336"
+            }
+          },
+          "Triformer": {
+            "mae": 0.347,
+            "mse": 0.25,
+            "provenance": {
+              "source_type": "table",
+              "source_id": "Table 7",
+              "page": "unknown",
+              "row": "PEMS04",
+              "col": "336"
+            }
+          },
+          "DLinear": {
+            "mae": 0.327,
+            "mse": 0.235,
+            "provenance": {
+              "source_type": "table",
+              "source_id": "Table 7",
+              "page": "unknown",
+              "row": "PEMS04",
+              "col": "336"
+            }
+          },
+          "NLinear": {
+            "mae": 0.324,
+            "mse": 0.245,
+            "provenance": {
+              "source_type": "table",
+              "source_id": "Table 7",
+              "page": "unknown",
+              "row": "PEMS04",
+              "col": "336"
+            }
+          },
+          "MICN": {
+            "mae": 0.453,
+            "mse": 0.384,
+            "provenance": {
+              "source_type": "table",
+              "source_id": "Table 7",
+              "page": "unknown",
+              "row": "PEMS04",
+              "col": "336"
+            }
+          },
+          "TimesNet": {
+            "mae": 0.269,
+            "mse": 0.169,
+            "provenance": {
+              "source_type": "table",
+              "source_id": "Table 7",
+              "page": "unknown",
+              "row": "PEMS04",
+              "col": "336"
+            }
+          },
+          "TCN": {
+            "mae": 0.336,
+            "mse": 0.237,
+            "provenance": {
+              "source_type": "table",
+              "source_id": "Table 7",
+              "page": "unknown",
+              "row": "PEMS04",
+              "col": "336"
+            }
+          },
+          "FiLM": {
+            "mae": 0.327,
+            "mse": 0.243,
+            "provenance": {
+              "source_type": "table",
+              "source_id": "Table 7",
+              "page": "unknown",
+              "row": "PEMS04",
+              "col": "336"
+            }
+          },
+          "RNN": {
+            "mae": 0.939,
+            "mse": 1.373,
+            "provenance": {
+              "source_type": "table",
+              "source_id": "Table 7",
+              "page": "unknown",
+              "row": "PEMS04",
+              "col": "336"
+            }
+          },
+          "LR": {
+            "mae": 0.519,
+            "mse": 0.513,
+            "provenance": {
+              "source_type": "table",
+              "source_id": "Table 7",
+              "page": "unknown",
+              "row": "PEMS04",
+              "col": "336"
+            }
+          },
+          "VAR": {
+            "mae": 0.362,
+            "mse": 0.245,
+            "provenance": {
+              "source_type": "table",
+              "source_id": "Table 7",
+              "page": "unknown",
+              "row": "PEMS04",
+              "col": "336"
+            }
+          }
+        },
+        "720": {
+          "PatchTST": {
+            "mae": 0.338,
+            "mse": 0.233,
+            "provenance": {
+              "source_type": "table",
+              "source_id": "Table 7",
+              "page": "unknown",
+              "row": "PEMS04",
+              "col": "720"
+            }
+          },
+          "Crossformer": {
+            "mae": 0.331,
+            "mse": 0.235,
+            "provenance": {
+              "source_type": "table",
+              "source_id": "Table 7",
+              "page": "unknown",
+              "row": "PEMS04",
+              "col": "720"
+            }
+          },
+          "FEDformer": {
+            "mae": 0.728,
+            "mse": 0.873,
+            "provenance": {
+              "source_type": "table",
+              "source_id": "Table 7",
+              "page": "unknown",
+              "row": "PEMS04",
+              "col": "720"
+            }
+          },
+          "Informer": {
+            "mae": 0.391,
+            "mse": 0.31,
+            "provenance": {
+              "source_type": "table",
+              "source_id": "Table 7",
+              "page": "unknown",
+              "row": "PEMS04",
+              "col": "720"
+            }
+          },
+          "Triformer": {
+            "mae": 0.375,
+            "mse": 0.284,
+            "provenance": {
+              "source_type": "table",
+              "source_id": "Table 7",
+              "page": "unknown",
+              "row": "PEMS04",
+              "col": "720"
+            }
+          },
+          "DLinear": {
+            "mae": 0.395,
+            "mse": 0.327,
+            "provenance": {
+              "source_type": "table",
+              "source_id": "Table 7",
+              "page": "unknown",
+              "row": "PEMS04",
+              "col": "720"
+            }
+          },
+          "NLinear": {
+            "mae": 0.396,
+            "mse": 0.35,
+            "provenance": {
+              "source_type": "table",
+              "source_id": "Table 7",
+              "page": "unknown",
+              "row": "PEMS04",
+              "col": "720"
+            }
+          },
+          "MICN": {
+            "mae": 0.629,
+            "mse": 0.677,
+            "provenance": {
+              "source_type": "table",
+              "source_id": "Table 7",
+              "page": "unknown",
+              "row": "PEMS04",
+              "col": "720"
+            }
+          },
+          "TimesNet": {
+            "mae": 0.286,
+            "mse": 0.187,
+            "provenance": {
+              "source_type": "table",
+              "source_id": "Table 7",
+              "page": "unknown",
+              "row": "PEMS04",
+              "col": "720"
+            }
+          },
+          "TCN": {
+            "mae": 0.354,
+            "mse": 0.246,
+            "provenance": {
+              "source_type": "table",
+              "source_id": "Table 7",
+              "page": "unknown",
+              "row": "PEMS04",
+              "col": "720"
+            }
+          },
+          "FiLM": {
+            "mae": 0.386,
+            "mse": 0.322,
+            "provenance": {
+              "source_type": "table",
+              "source_id": "Table 7",
+              "page": "unknown",
+              "row": "PEMS04",
+              "col": "720"
+            }
+          },
+          "RNN": {
+            "mae": 0.938,
+            "mse": 1.372,
+            "provenance": {
+              "source_type": "table",
+              "source_id": "Table 7",
+              "page": "unknown",
+              "row": "PEMS04",
+              "col": "720"
+            }
+          },
+          "LR": {
+            "mae": 0.658,
+            "mse": 0.831,
+            "provenance": {
+              "source_type": "table",
+              "source_id": "Table 7",
+              "page": "unknown",
+              "row": "PEMS04",
+              "col": "720"
+            }
+          },
+          "VAR": {
+            "mae": 0.409,
+            "mse": 0.298,
+            "provenance": {
+              "source_type": "table",
+              "source_id": "Table 7",
+              "page": "unknown",
+              "row": "PEMS04",
+              "col": "720"
+            }
+          }
+        }
+      }
+    },
+    "traditional_vs_deep_comparison": {
+      "horizon": 24,
+      "metric": "MAE",
+      "datasets": {
+        "NASDAQ": {
+          "VAR": 0.462,
+          "LR": 0.616,
+          "PatchTST": 0.567,
+          "NLinear": 0.522,
+          "FEDformer": 0.547,
+          "Crossformer": 0.745,
+          "provenance": {
+            "source_type": "table",
+            "source_id": "Table 1",
+            "page": "unknown",
+            "row": "NASDAQ",
+            "col": "VAR/LR/PatchTST/NLinear/FEDformer/Crossformer"
+          }
+        },
+        "Wind": {
+          "VAR": 0.62,
+          "LR": 0.583,
+          "PatchTST": 0.652,
+          "NLinear": 0.64,
+          "FEDformer": 0.697,
+          "Crossformer": 0.59,
+          "provenance": {
+            "source_type": "table",
+            "source_id": "Table 1",
+            "page": "unknown",
+            "row": "Wind",
+            "col": "VAR/LR/PatchTST/NLinear/FEDformer/Crossformer"
+          }
+        },
+        "ILI": {
+          "VAR": 1.012,
+          "LR": 4.856,
+          "PatchTST": 0.835,
+          "NLinear": 0.919,
+          "FEDformer": 1.02,
+          "Crossformer": 1.096,
+          "provenance": {
+            "source_type": "table",
+            "source_id": "Table 1",
+            "page": "unknown",
+            "row": "ILI",
+            "col": "VAR/LR/PatchTST/NLinear/FEDformer/Crossformer"
+          }
+        }
+      }
+    },
+    "missing_cells": [
+      {
+        "source_id": "Table 7",
+        "field": "mts_results",
+        "reason": "Only a subset of Table 7 could be extracted within this response; remaining datasets/horizons/method entries not parsed are left absent rather than estimated."
+      },
+      {
+        "source_id": "Table 8",
+        "field": "mts_results",
+        "reason": "Table 8 exists in the text but was not fully structurally extracted here; missing values not inferred."
+      }
+    ]
+  },
+  "tfb_digest_priors": {
+    "overall_leaderboard_mts": {
+      "top_10": [
+        {
+          "method": "TimesNet",
+          "mean_rank": null,
+          "win_rate": null,
+          "tier": null,
+          "provenance": {
+            "source_type": "section",
+            "source_id": "Section 5.2.2 Multivariate time series forecasting",
+            "page": "unknown"
+          },
+          "notes": "Leaderboard not computed: mts_results extraction incomplete (Tables 7-8 not fully parsed)."
+        },
+        {
+          "method": "Crossformer",
+          "mean_rank": null,
+          "win_rate": null,
+          "tier": null,
+          "provenance": {
+            "source_type": "section",
+            "source_id": "Section 5.2.3 Performance on different characteristics",
+            "page": "unknown"
+          },
+          "notes": "Qualitative: exceptional on pronounced transition (PEMS08), stationary (Solar), correlated (PEMS-BAY); inferior on other characteristics."
+        },
+        {
+          "method": "PatchTST",
+          "mean_rank": null,
+          "win_rate": null,
+          "tier": null,
+          "provenance": {
+            "source_type": "section",
+            "source_id": "Section 5.2.3 Performance on different characteristics",
+            "page": "unknown"
+          },
+          "notes": "Qualitative: optimal on strong seasonality (Electricity); good consistent performance."
+        },
+        {
+          "method": "NLinear",
+          "mean_rank": null,
+          "win_rate": null,
+          "tier": null,
+          "provenance": {
+            "source_type": "section",
+            "source_id": "Section 5.2.3 Performance on different characteristics",
+            "page": "unknown"
+          },
+          "notes": "Qualitative: outstanding on strong trend (FRED-MD) and severe drift/shifting (NYSE); consistent performance."
+        },
+        {
+          "method": "DLinear",
+          "mean_rank": null,
+          "win_rate": null,
+          "tier": null,
+          "provenance": {
+            "source_type": "section",
+            "source_id": "Section 5.2.2 Multivariate time series forecasting",
+            "page": "unknown"
+          },
+          "notes": "Leaderboard not computed: mts_results extraction incomplete."
+        },
+        {
+          "method": "Informer",
+          "mean_rank": null,
+          "win_rate": null,
+          "tier": null,
+          "provenance": {
+            "source_type": "section",
+            "source_id": "Section 5.2.2 Multivariate time series forecasting",
+            "page": "unknown"
+          },
+          "notes": "Qualitative: does not consistently underperform; cited as not consistently outperformed by recent methods."
+        },
+        {
+          "method": "LR",
+          "mean_rank": null,
+          "win_rate": null,
+          "tier": null,
+          "provenance": {
+            "source_type": "section",
+            "source_id": "Section 5.2.2 Multivariate time series forecasting",
+            "page": "unknown"
+          },
+          "notes": "Qualitative: traditional method sometimes competitive; cited alongside Informer and VAR."
+        },
+        {
+          "method": "VAR",
+          "mean_rank": null,
+          "win_rate": null,
+          "tier": null,
+          "provenance": {
+            "source_type": "section",
+            "source_id": "Section 5.2.2 Multivariate time series forecasting",
+            "page": "unknown"
+          },
+          "notes": "Qualitative: traditional method sometimes competitive; see also Table 1."
+        },
+        {
+          "method": "FEDformer",
+          "mean_rank": null,
+          "win_rate": null,
+          "tier": null,
+          "provenance": {
+            "source_type": "section",
+            "source_id": "Section 5.2.2 Multivariate time series forecasting",
+            "page": "unknown"
+          },
+          "notes": "Leaderboard not computed: mts_results extraction incomplete."
+        },
+        {
+          "method": "Triformer",
+          "mean_rank": null,
+          "win_rate": null,
+          "tier": null,
+          "provenance": {
+            "source_type": "section",
+            "source_id": "Section 5.2.2 Multivariate time series forecasting",
+            "page": "unknown"
+          },
+          "notes": "Leaderboard not computed: mts_results extraction incomplete."
+        }
+      ],
+      "computation_status": {
+        "computed_from_tables_only": false,
+        "reason": "Tables 7-8 were not fully extracted into tfb_raw_tables['mts_results'], so mean ranks/win rates cannot be computed without missing data.",
+        "provenance": {
+          "source_type": "section",
+          "source_id": "Tables 7 and 8 referenced in Section 5.2.2",
+          "page": "unknown"
+        }
+      }
+    },
+    "characteristic_rules_from_paper_text": [
+      {
+        "rule": "Linear-based methods excel when the dataset shows an increasing trend or significant shifts.",
+        "evidence": "“Linear-based methods excel when the dataset shows an increasing trend or significant shifts.”",
+        "provenance": {
+          "source_type": "section",
+          "source_id": "Section 5.3.1 Transformers vs. linear methods",
+          "page": "unknown"
+        }
+      },
+      {
+        "rule": "Transformer-based methods outperform linear-based methods on datasets exhibiting marked seasonality, stationarity, and nonlinear patterns, as well as more pronounced patterns or strong internal similarities.",
+        "evidence": "“Transformer-based methods outperform Linear-based methods on datasets exhibiting marked seasonality, stationarity, and nonlinear patterns, as well as more pronounced patterns or strong internal similarities.”",
+        "provenance": {
+          "source_type": "section",
+          "source_id": "Section 5.3.1 Transformers vs. linear methods",
+          "page": "unknown"
+        }
+      },
+      {
+        "rule": "Introducing consideration for dependencies between channels can significantly improve multivariate forecasting performance, especially on datasets with strong correlations, compared to methods that assume channel independence.",
+        "evidence": "“introducing consideration for dependencies between channels can significantly improve the performance ... especially on datasets with strong correlations, when compared to methods that assume channel independence.”",
+        "provenance": {
+          "source_type": "section",
+          "source_id": "Section 5.3.2 Channel independence vs. channel dependence",
+          "page": "unknown"
+        }
+      },
+      {
+        "rule": "When correlations within a dataset increase, Crossformer gradually surpasses PatchTST; when correlations are not pronounced, PatchTST is better.",
+        "evidence": "“as the correlations within a dataset increase, the performance of Crossformer gradually surpasses that of PatchTST ... However, when correlations among variables are not pronounced, PatchTST ... is better.”",
+        "provenance": {
+          "source_type": "section",
+          "source_id": "Section 5.3.2 Channel independence vs. channel dependence",
+          "page": "unknown"
+        }
+      }
+    ],
+    "model_signatures": [
+      {
+        "model": "Crossformer",
+        "best_when": [
+          "transition is highly pronounced (PEMS08)",
+          "data is most stationary (Solar)",
+          "data is most correlated (PEMS-BAY)",
+          "correlations within dataset are strong (channel dependencies helpful)"
+        ],
+        "worst_when": [
+          "time series with other characteristics (unspecified) where its performance is noticeably inferior to other methods",
+          "correlations among variables are not pronounced"
+        ],
+        "provenance": {
+          "source_type": "section",
+          "source_id": "Section 5.2.3 Performance on different characteristics; Section 5.3.2 Channel independence vs. channel dependence",
+          "page": "unknown"
+        }
+      },
+      {
+        "model": "PatchTST",
+        "best_when": [
+          "datasets with strong seasonality (Electricity)",
+          "correlations among variables are not pronounced (channel independence)"
+        ],
+        "worst_when": [
+          "datasets with strong correlations (Crossformer surpasses as correlations increase)"
+        ],
+        "provenance": {
+          "source_type": "section",
+          "source_id": "Section 5.2.3 Performance on different characteristics; Section 5.3.2 Channel independence vs. channel dependence",
+          "page": "unknown"
+        }
+      },
+      {
+        "model": "NLinear",
+        "best_when": [
+          "time series with the most significant trend (FRED-MD)",
+          "severe drift/shifting (NYSE)"
+        ],
+        "worst_when": [],
+        "provenance": {
+          "source_type": "section",
+          "source_id": "Section 5.2.3 Performance on different characteristics",
+          "page": "unknown"
+        }
+      }
+    ]
+  }
+}

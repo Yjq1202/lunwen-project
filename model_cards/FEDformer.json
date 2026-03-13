@@ -1,0 +1,110 @@
+{
+  "model_name": "FEDformer",
+  "Primary Task Type": "Long/Short-term Time Series Forecasting (with optional Imputation / Anomaly Detection / Classification modes)",
+  "Model Architecture Category": "Transformer-family encoder–decoder with frequency-domain correlation/attention (FEDformer: Fourier/Wavelet enhanced AutoCorrelation)",
+  "Core Mechanism & Structure": "An Autoformer-style progressive decomposition Transformer: input series are embedded (token conv + temporal features + sinusoidal positional encoding), then passed through an Encoder stack of EncoderLayer blocks that replace dot-product attention with an AutoCorrelationLayer whose inner operator is either a FourierBlock (default) or a MultiWaveletTransform. For forecasting, the model first decomposes the encoder input into seasonal and trend via moving-average series_decomp, feeds seasonal into the Decoder (self + cross correlation layers; cross uses FourierCrossAttention or MultiWaveletCross), and iteratively refines/accumulates the trend through decomposition inside each DecoderLayer; final output is the sum of seasonal_part and trend_part, projected to c_out.",
+  "Core Innovations": "1) Frequency-domain enhanced correlation blocks (FourierBlock / FourierCrossAttention) plugged into AutoCorrelationLayer to model long-range dependencies by operating on selected Fourier modes via FFT/IRFFT. 2) Autoformer progressive series decomposition integrated throughout encoder/decoder layers (multiple series_decomp applications per layer) to separate and update seasonal vs trend components and mitigate non-stationarity. 3) Optional wavelet-based alternative (MultiWaveletTransform / MultiWaveletCross) that performs multiscale decomposition/reconstruction with Fourier-based cross-attention at multiple scales.",
+  "Key Technical Details": {
+    "Input Embedding": "DataEmbedding: TokenEmbedding (1D Conv kernel=3 with circular padding) + TemporalEmbedding (fixed/learned categorical time features or linear TimeFeatureEmbedding when embed_type='timeF') + fixed sinusoidal PositionalEmbedding; dropout applied. Decoder uses the same DataEmbedding on seasonal_init for forecasting.",
+    "Feature Extraction": "Core correlation/attention is via AutoCorrelationLayer (linear Q/K/V projections + inner correlation op). Inner op is either: (a) FourierBlock for self-correlation (FFT -> complex linear mixing on selected modes -> IRFFT), and FourierCrossAttention for cross (FFT of Q/K, complex interactions + tanh/softmax activation, complex mixing, IRFFT); or (b) MultiWaveletTransform for self, MultiWaveletCross for cross (wavelet decomposition/reconstruction with multiple FourierCrossAttentionW at different scales). Each EncoderLayer/DecoderLayer also has a position-wise feedforward implemented as Conv1d(1x1) -> activation -> Conv1d(1x1), plus multiple series_decomp calls for progressive decomposition. DecoderLayer additionally uses a Conv1d(kernel=3, circular padding) to project residual trend to c_out.",
+    "Positional Encoding": "Absolute fixed sinusoidal PositionalEmbedding (non-trainable buffer 'pe') added in DataEmbedding.",
+    "Non-stationarity Handling": "Explicit moving-average series decomposition (series_decomp with moving_avg AvgPool1d) used both as a preprocessing step in forecast() and progressively inside every EncoderLayer (two decomps) and DecoderLayer (three decomps) to separate seasonal/residual and trend updates; my_Layernorm further removes per-sample temporal bias from normalized seasonal representations."
+  },
+  "Evidence": {
+    "Direct Observations": [
+      {
+        "claim": "Implements a Transformer-like Encoder–Decoder with stacked layers",
+        "evidence": "models/FEDformer.py defines self.encoder = Encoder([...EncoderLayer(...) for l in range(configs.e_layers)]) and self.decoder = Decoder([...DecoderLayer(...) for l in range(configs.d_layers)]). Encoder/Decoder classes are in layers/Autoformer_EncDec.py."
+      },
+      {
+        "claim": "Uses series decomposition (moving average) and progressive decomposition inside layers",
+        "evidence": "layers/Autoformer_EncDec.py defines series_decomp(moving_avg) and EncoderLayer has decomp1/decomp2; DecoderLayer has decomp1/decomp2/decomp3. models/FEDformer.py uses self.decomp = series_decomp(configs.moving_avg) and in forecast() does seasonal_init, trend_init = self.decomp(x_enc)."
+      },
+      {
+        "claim": "Replaces standard attention with AutoCorrelationLayer wrapper",
+        "evidence": "models/FEDformer.py builds EncoderLayer(AutoCorrelationLayer(encoder_self_att, configs.d_model, configs.n_heads), ...) and DecoderLayer(AutoCorrelationLayer(decoder_self_att,...), AutoCorrelationLayer(decoder_cross_att,...), ...). AutoCorrelationLayer is defined in layers/AutoCorrelation.py."
+      },
+      {
+        "claim": "Default version uses Fourier-based frequency-domain blocks for self and cross correlation",
+        "evidence": "models/FEDformer.py else-branch sets encoder_self_att = FourierBlock(...), decoder_self_att = FourierBlock(...), decoder_cross_att = FourierCrossAttention(...). Implementations in layers/FourierCorrelation.py use torch.fft.rfft/irfft and mode selection via get_frequency_modes()."
+      },
+      {
+        "claim": "Optional Wavelets version uses MultiWaveletTransform for self and MultiWaveletCross for cross",
+        "evidence": "models/FEDformer.py if self.version == 'Wavelets': encoder_self_att = MultiWaveletTransform(...), decoder_self_att = MultiWaveletTransform(...), decoder_cross_att = MultiWaveletCross(...). Implementations are in layers/MultiWaveletCorrelation.py."
+      },
+      {
+        "claim": "Uses convolutional token embedding + temporal embedding + sinusoidal positional embedding",
+        "evidence": "layers/Embed.py DataEmbedding adds TokenEmbedding (Conv1d kernel_size=3 circular padding), TemporalEmbedding/TimeFeatureEmbedding, and PositionalEmbedding (sin/cos), then dropout. models/FEDformer.py uses self.enc_embedding = DataEmbedding(...) and self.dec_embedding = DataEmbedding(...)."
+      },
+      {
+        "claim": "Forecasting output is seasonal + trend with trend initialized by mean and updated through decoder",
+        "evidence": "models/FEDformer.py forecast(): mean = torch.mean(x_enc, dim=1)...; seasonal_init, trend_init = self.decomp(x_enc); decoder returns seasonal_part, trend_part; dec_out = trend_part + seasonal_part; forward() returns last pred_len."
+      },
+      {
+        "claim": "Supports multiple tasks via task_name switch: forecasting, imputation, anomaly_detection, classification",
+        "evidence": "models/FEDformer.py defines forecast(), imputation(), anomaly_detection(), classification(), and forward() dispatches based on self.task_name; classification uses projection = Linear(d_model*seq_len, num_class)."
+      },
+      {
+        "claim": "Positional embeddings are fixed (non-trainable)",
+        "evidence": "layers/Embed.py PositionalEmbedding registers buffer 'pe' and sets pe.require_grad = False; FixedEmbedding uses nn.Parameter(w, requires_grad=False)."
+      }
+    ],
+    "Unknown / Not in Code": [
+      "RevIN or other instance normalization modules are not present in the provided files.",
+      "Any explicit probabilistic forecasting head (e.g., distribution parameters, quantiles) is not shown.",
+      "No explicit masking logic for causal attention is used (attn_mask passed as None in encoder/decoder calls from models/FEDformer.py)."
+    ]
+  },
+  "Inferred Suitability": {
+    "Strengths": [
+      {
+        "label": "Long-horizon forecasting with seasonal/trend structure",
+        "why": "Explicit decomposition (series_decomp) and separate seasonal (decoder input) + trend accumulation (decoder residual_trend) is well aligned with seasonal/trend-dominated time series.",
+        "conditions": "Datasets with clear trend/seasonality and medium-to-long prediction horizons (pred_len large relative to seq_len).",
+        "confidence": "high"
+      },
+      {
+        "label": "Efficient global dependency modeling via frequency-domain operations",
+        "why": "FourierBlock/FourierCrossAttention operate on a limited set of Fourier modes (modes) using FFTs, avoiding explicit LxL attention matrices.",
+        "conditions": "Long input lengths where selecting a moderate number of modes captures dominant periodicities (e.g., electricity/traffic/weather with strong cycles).",
+        "confidence": "medium"
+      },
+      {
+        "label": "Multi-task reuse of encoder representations",
+        "why": "Imputation and anomaly_detection directly project encoder outputs to c_out, leveraging shared temporal feature extraction.",
+        "conditions": "When imputation/anomaly tasks are formulated as per-timestep reconstruction/regression on the same feature space.",
+        "confidence": "medium"
+      }
+    ],
+    "Weaknesses": [
+      {
+        "label": "Potential device bug in AutoCorrelation inference",
+        "why": "layers/AutoCorrelation.py time_delay_agg_inference() and time_delay_agg_full() create init_index with .cuda(), which can break on CPU or non-default devices.",
+        "conditions": "Running inference on CPU or on a CUDA device that isn't the current default device.",
+        "confidence": "high"
+      },
+      {
+        "label": "Mode truncation may miss sharp/non-periodic dynamics",
+        "why": "Fourier-based blocks only mix selected frequency modes (get_frequency_modes), which can under-represent localized transients or regime shifts.",
+        "conditions": "Highly non-stationary series with abrupt events/spikes where high-frequency components or time-local features matter.",
+        "confidence": "medium"
+      },
+      {
+        "label": "Wavelet version adds heavy dependencies and compute overhead",
+        "why": "layers/MultiWaveletCorrelation.py imports sympy and scipy and performs multiscale transforms plus multiple attention calls (attn1..attn4).",
+        "conditions": "Using version='Wavelets' in environments without these packages, or when low-latency inference is required.",
+        "confidence": "high"
+      }
+    ]
+  },
+  "Resource Requirements & Complexity": "Parameters scale similarly to a Transformer with d_model, d_ff, e_layers, d_layers plus extra complex weights for Fourier blocks (per head, per selected mode). Fourier operations use FFT/IRFFT: roughly O(B * H * E * L log L) plus O(B * H * E * modes) mixing, avoiding explicit O(L^2) attention. Decoder/encoder add O(B * L * d_model * d_ff) from 1x1 Conv feedforward. Wavelet option increases compute due to multiscale decomposition/reconstruction and multiple cross-attention calls at each scale; it also introduces substantial implementation overhead and dependencies.",
+  "Paper Link": "https://proceedings.mlr.press/v162/zhou22g.html",
+  "_source_files": [
+    "models/FEDformer.py",
+    "layers/Embed.py",
+    "layers/AutoCorrelation.py",
+    "layers/FourierCorrelation.py",
+    "layers/MultiWaveletCorrelation.py",
+    "layers/Autoformer_EncDec.py"
+  ]
+}

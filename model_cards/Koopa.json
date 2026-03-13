@@ -1,0 +1,109 @@
+{
+  "model_name": "Koopa",
+  "Primary Task Type": "Long-term Time Series Forecasting",
+  "Model Architecture Category": "Koopman-operator-based deep forecasting model (Fourier disentanglement + MLP enc/dec + linear dynamics via DMD / learned linear operator)",
+  "Core Mechanism & Structure": "The model performs long-horizon forecasting by first stationarizing the input series (per-sample mean/std normalization), then iteratively applying multiple “Koopa blocks”. In each block, the residual signal is decomposed in the Fourier domain into time-variant and time-invariant components. The time-invariant component is modeled with a learnable linear Koopman operator in a latent space produced by an MLP encoder/decoder (channel-wise latent dynamics). The time-variant component is modeled by segmenting the sequence into fixed-length chunks, encoding each chunk into a latent Koopman space, estimating a linear transition operator via least-squares DMD (optionally using multi-step matrix powers), and decoding both a backcast (reconstruction) and a forecast. The backcast is subtracted from the residual (boosting-style residual refinement), while all block forecasts are summed and finally de-normalized back to the original scale.",
+  "Core Innovations": "1) Fourier-domain disentanglement of residual into time-invariant vs time-variant terms using a dataset-derived shared frequency mask (top-k amplitudes) and separate Koopman predictors per component. 2) Hybrid Koopman learning: time-variant dynamics solved analytically per batch/window via least-squares DMD, while time-invariant dynamics use a globally learned linear operator initialized to a stable orthogonal-like matrix via SVD. 3) Residual stacking of multiple Koopman blocks with backcast subtraction and forecast accumulation (iterative refinement akin to N-BEATS-style residual modeling).",
+  "Key Technical Details": {
+    "Input Embedding": "No token/patch embedding; uses MLP encoders. Time-invariant branch transposes to shape (B,C,L) and applies an MLP with f_in=input_len per channel; time-variant branch pads and reshapes into segments and applies an MLP with f_in=seg_len*enc_in per segment.",
+    "Feature Extraction": "Fourier-based filtering (rFFT masking) for disentanglement; latent linear dynamics via Koopman operator: (a) per-batch least-squares estimation K = lstsq(X,Y) for time-variant component, rolled out by repeated multiplication or multi-step matrix power; (b) learned linear map K (nn.Linear without bias) for time-invariant component.",
+    "Positional Encoding": "No explicit positional encoding is implemented (no absolute/relative PE, no attention). Temporal order is implicitly captured through segmentation and linear dynamical evolution in latent space.",
+    "Non-stationarity Handling": "Explicit series stationarization in Model.forecast: subtract per-sample mean and divide by per-sample std, then de-normalize output (commented as adopted from NSformer). Additionally, block-wise residual refinement (residual = residual - time_var_backcast) helps handle non-stationary components."
+  },
+  "Evidence": {
+    "Direct Observations": [
+      {
+        "claim": "Primary task implemented is long-term forecasting only",
+        "evidence": "models/Koopa.py: Model.forward checks `if self.task_name == 'long_term_forecast'` and returns forecast; no other task branches implemented."
+      },
+      {
+        "claim": "Fourier-domain disentanglement into time-variant and time-invariant components",
+        "evidence": "models/Koopa.py: class FourierFilter uses `torch.fft.rfft` and a frequency mask (`mask[:, self.mask_spectrum, :] = 0`) to produce `x_var` and `x_inv`."
+      },
+      {
+        "claim": "Shared frequency mask is computed from training data via top-k FFT amplitudes",
+        "evidence": "models/Koopa.py: Model._get_mask_spectrum loads train loader via `data_provider(configs, 'train')`, accumulates `abs(torch.fft.rfft(lookback_window, dim=1)).mean(...)`, then `amps.topk(int(amps.shape[0]*self.alpha)).indices`."
+      },
+      {
+        "claim": "Time-variant branch uses DMD/least-squares to estimate a Koopman transition matrix per batch",
+        "evidence": "models/Koopa.py: KPLayer.one_step_forward computes `self.K = torch.linalg.lstsq(x, y).solution` and forecasts by `torch.bmm(z[:, -1:], self.K)`; KPLayerApprox similarly uses `torch.linalg.lstsq` plus `torch.linalg.matrix_power`."
+      },
+      {
+        "claim": "Time-variant modeling is segment-based (chunking and reshaping) with MLP encoder/decoder around Koopman dynamics",
+        "evidence": "models/Koopa.py: TimeVarKP.forward pads, `chunk(self.freq, dim=1)`, `stack(...).reshape(B, self.freq, -1)` then `self.encoder`, `self.dynamics`, `self.decoder`, and reshapes back to (B,L,C) / (B,S,C)."
+      },
+      {
+        "claim": "Time-invariant branch uses a globally learned linear Koopman operator (nn.Linear without bias) with SVD-based initialization",
+        "evidence": "models/Koopa.py: TimeInvKP defines `self.K = nn.Linear(self.dynamic_dim, self.dynamic_dim, bias=False)` and initializes weights with `U, _, V = torch.svd(K_init)` then `self.K.weight.data = torch.mm(U, V.t())`."
+      },
+      {
+        "claim": "Non-stationarity handling via per-sample mean/std normalization and de-normalization (stationarization)",
+        "evidence": "models/Koopa.py: Model.forecast computes `mean_enc = x_enc.mean(1, keepdim=True)`, subtracts it, computes `std_enc = sqrt(var + 1e-5)`, divides, then later `res = forecast * std_enc + mean_enc`."
+      },
+      {
+        "claim": "Multi-block residual refinement with backcast subtraction and forecast summation",
+        "evidence": "models/Koopa.py: in Model.forecast loop: `time_var_backcast, time_var_output = ...`; `residual = residual - time_var_backcast`; forecast is accumulated by summing `time_inv_output + time_var_output` across blocks."
+      },
+      {
+        "claim": "Model uses only MLPs (no attention/transformer modules)",
+        "evidence": "models/Koopa.py: only nn.Linear/activation/dropout-based MLP, FFT ops, and linear algebra; no nn.MultiheadAttention or transformer blocks appear."
+      },
+      {
+        "claim": "Paper link is provided in code",
+        "evidence": "models/Koopa.py: Model docstring includes `Paper link: https://arxiv.org/pdf/2305.18803.pdf`."
+      }
+    ],
+    "Unknown / Not in Code": [
+      "Any explicit probabilistic forecasting head (quantiles, likelihood) is not present.",
+      "Any exogenous/time-feature embedding using x_mark_enc/x_mark_dec is not used (arguments exist but unused).",
+      "No explicit missing-value imputation logic is implemented."
+    ]
+  },
+  "Inferred Suitability": {
+    "Strengths": [
+      {
+        "label": "Efficient long-horizon rollout via linear latent dynamics",
+        "why": "Forecasting uses latent linear transitions (matrix multiplication / matrix power) rather than attention over all timesteps",
+        "conditions": "When pred_len is large and attention-based O(L^2) models are too slow; especially if dynamic_dim is moderate",
+        "confidence": "high"
+      },
+      {
+        "label": "Handles mixed stationary/non-stationary structure via decomposition + normalization",
+        "why": "Explicit mean/std stationarization plus Fourier split into invariant/variant components and iterative residual refinement",
+        "conditions": "When series contain trend/seasonality plus local variations that benefit from separating stable frequency components",
+        "confidence": "medium"
+      },
+      {
+        "label": "Interpretable dynamics in latent space (Koopman/DMD)",
+        "why": "Time-variant branch explicitly estimates a linear operator K from consecutive latent snapshots via least squares",
+        "conditions": "When underlying dynamics are approximately linear in a learned embedding (Koopman assumption) and noise is not extreme",
+        "confidence": "medium"
+      }
+    ],
+    "Weaknesses": [
+      {
+        "label": "Potential instability / sensitivity of least-squares DMD under noise or ill-conditioning",
+        "why": "K is computed via `torch.linalg.lstsq(x,y)` per batch; small snapshot count or collinearity can yield unstable/poor K (code even checks for NaNs and falls back to identity)",
+        "conditions": "When input_len is small, dynamics are highly nonlinear/non-Koopman, or data are noisy/low-rank causing ill-conditioned least squares",
+        "confidence": "high"
+      },
+      {
+        "label": "Fourier mask depends on training distribution and uses a fixed top-k selection",
+        "why": "mask_spectrum is computed once from training loader using global average FFT amplitudes (top alpha proportion); may not generalize to regime shifts",
+        "conditions": "When test data have different dominant frequencies or abrupt spectral changes compared to training",
+        "confidence": "medium"
+      },
+      {
+        "label": "Limited use of covariates/time markers",
+        "why": "forward signature includes x_mark_enc/x_mark_dec but they are unused; model forecasts only from x_enc values",
+        "conditions": "When exogenous variables/calendar features are important drivers of the target",
+        "confidence": "high"
+      }
+    ]
+  },
+  "Resource Requirements & Complexity": "Compute is dominated by: (1) FFTs for disentanglement: O(B*C*L log L) per block; (2) least-squares solve for K in time-variant branch: roughly O(B*F*E^3) if treated as solving E×E per batch (practically depends on lstsq implementation and snapshot length), plus rollout O(B*step*E^2); (3) MLP enc/dec: O(B*F*(PC*H + H*E)) for time-variant and O(B*C*(L*H + H*E + E*H + H*pred_len)) for time-invariant. Memory is moderate (no O(L^2) attention). Parameter count mainly from MLPs and the learned K in TimeInvKP (dynamic_dim^2) replicated per block (note: code constructs a ModuleList for TimeInvKP num_blocks times, each with its own K).",
+  "Paper Link": "https://arxiv.org/pdf/2305.18803.pdf",
+  "_source_files": [
+    "models/Koopa.py"
+  ]
+}

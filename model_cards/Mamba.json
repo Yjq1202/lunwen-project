@@ -1,0 +1,99 @@
+{
+  "model_name": "Mamba",
+  "Primary Task Type": "Time Series Forecasting (short-term / long-term)",
+  "Model Architecture Category": "State Space Model (SSM)-based (Mamba) with convolutional token embedding",
+  "Core Mechanism & Structure": "A single-stage sequence model for multivariate time series forecasting: (1) per-sample normalization of the encoder input over the time dimension, (2) token/temporal/positional embedding via a Conv1d-based value embedding plus sinusoidal positional encoding and optional calendar/time-feature embedding, (3) a Mamba SSM block (from `mamba_ssm`) as the main sequence mixer operating on the embedded sequence, and (4) a linear projection head to map hidden states to output channels, followed by de-normalization. The forward path returns the last `pred_len` steps for forecasting tasks and does not implement other tasks despite having a generic interface signature.",
+  "Core Innovations": "1) Replacing Transformer attention with a Mamba SSM block (`mamba_ssm.Mamba`) as the core long-context sequence mixer. 2) Using a convolutional token embedding (`Conv1d`, circular padding, kernel_size=3) to inject local inductive bias before the SSM. 3) Explicit per-sample mean/std normalization and de-normalization inside `forecast()` (a lightweight alternative to dedicated non-stationarity modules like RevIN).",
+  "Key Technical Details": {
+    "Input Embedding": "DataEmbedding: value embedding via `TokenEmbedding` (Conv1d over time) + optional `TemporalEmbedding`/`TimeFeatureEmbedding` from `x_mark_enc` + sinusoidal `PositionalEmbedding`; followed by dropout.",
+    "Feature Extraction": "Sequence mixing via a single `mamba_ssm.Mamba` block configured with `d_model=configs.d_model`, `d_state=configs.d_ff`, `d_conv=configs.d_conv`, `expand=configs.expand`. No encoder-decoder stack or cross-attention is present; decoding is done by linear projection on all time steps and slicing the last `pred_len`.",
+    "Positional Encoding": "Fixed (non-learnable) absolute sinusoidal positional encoding implemented in `layers/Embed.py::PositionalEmbedding` and added in `DataEmbedding.forward`.",
+    "Non-stationarity Handling": "Per-sample normalization in `models/Mamba.py::Model.forecast`: subtract mean over time dimension and divide by per-sample std over time; output is de-normalized with the same statistics. No explicit decomposition (trend/seasonality) or RevIN module is used."
+  },
+  "Evidence": {
+    "Direct Observations": [
+      {
+        "claim": "Primary backbone is an SSM mixer using Mamba (not attention)",
+        "evidence": "In `models/Mamba.py`: `from mamba_ssm import Mamba` and `self.mamba = Mamba(d_model=configs.d_model, d_state=configs.d_ff, d_conv=configs.d_conv, expand=configs.expand)`; then `x = self.mamba(x)` in `forecast()`."
+      },
+      {
+        "claim": "Forecasting-only behavior is implemented; other tasks are not implemented",
+        "evidence": "In `models/Mamba.py::forward`: only checks `if self.task_name in ['short_term_forecast', 'long_term_forecast']` and returns sliced forecast; comment `# other tasks not implemented`."
+      },
+      {
+        "claim": "Uses explicit mean/std normalization and de-normalization in forward path",
+        "evidence": "In `models/Mamba.py::forecast`: `mean_enc = x_enc.mean(1, keepdim=True)`; `std_enc = torch.sqrt(torch.var(...)+1e-5)`; `x_enc = (x_enc-mean_enc)/std_enc`; later `x_out = x_out * std_enc + mean_enc`."
+      },
+      {
+        "claim": "Input embedding uses Conv1d token/value embedding with circular padding and kernel_size=3",
+        "evidence": "In `layers/Embed.py::TokenEmbedding`: `nn.Conv1d(..., kernel_size=3, padding=padding, padding_mode='circular', bias=False)`; used in `DataEmbedding.__init__`: `self.value_embedding = TokenEmbedding(...)`."
+      },
+      {
+        "claim": "Adds fixed sinusoidal positional encoding",
+        "evidence": "In `layers/Embed.py::PositionalEmbedding`: constructs sin/cos `pe` and `register_buffer('pe', pe)`; used in `DataEmbedding.forward`: `... + self.position_embedding(x)`."
+      },
+      {
+        "claim": "Supports temporal/covariate embeddings from time markers",
+        "evidence": "In `layers/Embed.py::DataEmbedding`: `self.temporal_embedding = TemporalEmbedding(...) if embed_type != 'timeF' else TimeFeatureEmbedding(...)`; in `forward`: if `x_mark` is not None, adds `self.temporal_embedding(x_mark)`."
+      },
+      {
+        "claim": "Prediction head is a linear projection from d_model to c_out without bias",
+        "evidence": "In `models/Mamba.py`: `self.out_layer = nn.Linear(configs.d_model, configs.c_out, bias=False)`; used as `x_out = self.out_layer(x)`."
+      }
+    ],
+    "Unknown / Not in Code": [
+      "No explicit multi-layer encoder/decoder stack is shown (only one `Mamba` module is instantiated in this file).",
+      "No attention mechanism (self-attention, cross-attention, causal masking) is present in the provided code.",
+      "No RevIN module or series decomposition module is present in the provided files.",
+      "No explicit training loss, autoregressive decoding loop, or probabilistic output head is included."
+    ]
+  },
+  "Inferred Suitability": {
+    "Strengths": [
+      {
+        "label": "Efficient long-context sequence modeling vs full attention",
+        "why": "Uses an SSM-style Mamba block as the main sequence mixer (typically avoids O(L^2) attention matrices) while still processing full sequences in parallel during training.",
+        "conditions": "When sequence length L is large (e.g., hundreds to thousands) and Transformer full-attention would be memory/compute heavy",
+        "confidence": "medium"
+      },
+      {
+        "label": "Good inductive bias for local temporal patterns",
+        "why": "Token embedding is a temporal Conv1d with kernel_size=3 and circular padding, which can capture short-term local dependencies before global mixing.",
+        "conditions": "When the signal has strong short-range dynamics (e.g., high-frequency fluctuations) and inputs are regularly sampled",
+        "confidence": "high"
+      },
+      {
+        "label": "Robustness to scale shifts across samples",
+        "why": "Per-sample mean/std normalization and de-normalization reduces sensitivity to absolute scale and offset changes across windows.",
+        "conditions": "When different time windows/series have varying levels/volatility and model is trained on sliding windows",
+        "confidence": "high"
+      }
+    ],
+    "Weaknesses": [
+      {
+        "label": "Limited expressiveness (single backbone block, no hierarchical depth shown)",
+        "why": "Only one `Mamba(...)` module is instantiated in the shown model; no stacking/encoder depth is visible in this file.",
+        "conditions": "When tasks require deeper abstractions, multi-scale processing, or very complex temporal interactions",
+        "confidence": "medium"
+      },
+      {
+        "label": "No explicit decoder or known-future covariate usage for forecasting horizon",
+        "why": "The model embeds and processes only `x_enc` and `x_mark_enc`; `x_dec` and `x_mark_dec` are accepted by `forward` but not used; output is produced for all input timesteps then sliced.",
+        "conditions": "When forecasting strongly depends on known future inputs (e.g., planned interventions, future calendar features beyond encoder range)",
+        "confidence": "high"
+      },
+      {
+        "label": "Potential mismatch between output length and true forecasting setup if pred_len > input length",
+        "why": "Returns `x_out[:, -pred_len:, :]` where `x_out` length equals encoder length (since no explicit length extension is implemented).",
+        "conditions": "When `pred_len` is greater than the provided encoder sequence length, or when you expect generation beyond observed context without providing longer input",
+        "confidence": "high"
+      }
+    ]
+  },
+  "Resource Requirements & Complexity": "Parameter count dominated by: (a) Conv1d token embedding (O(c_in*d_model*kernel)), (b) Mamba block parameters (roughly O(d_model*(d_state + d_conv)*expand) depending on implementation details in `mamba_ssm`), and (c) output linear head (O(d_model*c_out)). Compute is linear-ish in sequence length L for the embedding Conv1d and typically linear in L for SSM-style mixing (implementation-dependent). Memory scales roughly with activations O(B*L*d_model) without an explicit O(L^2) attention matrix in the provided code.",
+  "Paper Link": "None",
+  "_source_files": [
+    "models/Mamba.py",
+    "layers/Embed.py"
+  ]
+}

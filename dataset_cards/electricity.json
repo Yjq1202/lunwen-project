@@ -1,0 +1,52 @@
+{
+  "meta": {
+    "dataset_name": "electricity",
+    "file_name": "electricity.csv",
+    "task_type": "MTS",
+    "num_rows": 26304,
+    "num_cols": 321,
+    "freq": "Unknown",
+    "prediction_settings": {
+      "horizons": [
+        96,
+        192,
+        336,
+        720
+      ],
+      "lookback": 96
+    }
+  },
+  "stats": {
+    "missing_rate": 0.0,
+    "mean": 3335.88,
+    "std": 552.75,
+    "cv": 0.17,
+    "skewness": 0.77,
+    "kurtosis": 0.77,
+    "adf_p_value": 0.0,
+    "is_stationary_adf": true,
+    "trend_linearity_r2": 0.01,
+    "trend_slope": -0.0078,
+    "seasonality_strength": 0.01,
+    "main_period": 8768.0,
+    "autocorr_lag1": 0.95
+  },
+  "tags": {
+    "non_stationary": false,
+    "strong_trend": false,
+    "strong_seasonality": false,
+    "high_noise": false,
+    "has_missing_values": false
+  },
+  "semantic_info": {
+    "dataset_name_pretty": "Electricity Consumption Patterns (Hourly)",
+    "domain": "Energy",
+    "description": "The dataset titled 'electricity.csv' appears to record hourly electricity consumption data across multiple sites, as indicated by the multi-column layout representing different entities. The data is pristine, with no missing values, and has been statistically validated to be stationary based on the ADF test. While there's a slight skewness and a lower level of kurtosis indicating some non-normal distributional traits, trend and seasonality play a minimal role here, as highlighted by very weak trend linearity and seasonality strength scores. The dataset's most notable feature is the strong first-order autocorrelation, suggesting persistent short-term dependencies that might be essential for effective time series modeling.",
+    "recommended_model_types": [
+      "Autoregressive Models",
+      "Linear Models",
+      "Simple MLPs"
+    ],
+    "reasoning_for_recommendation": "Due to the dataset's strong short-term dependencies and absence of pronounced trend or seasonality, models focusing on autoregressive properties and robust handling of static data variations are preferred."
+  }
+}

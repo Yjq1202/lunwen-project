@@ -1,0 +1,52 @@
+{
+  "meta": {
+    "dataset_name": "ETTm1",
+    "file_name": "ETTm1.csv",
+    "task_type": "MTS",
+    "num_rows": 69680,
+    "num_cols": 7,
+    "freq": "Unknown",
+    "prediction_settings": {
+      "horizons": [
+        96,
+        192,
+        336,
+        720
+      ],
+      "lookback": 96
+    }
+  },
+  "stats": {
+    "missing_rate": 0.0,
+    "mean": 13.32,
+    "std": 8.56,
+    "cv": 0.64,
+    "skewness": 0.97,
+    "kurtosis": 0.77,
+    "adf_p_value": 0.0003,
+    "is_stationary_adf": true,
+    "trend_linearity_r2": 0.39,
+    "trend_slope": -0.0003,
+    "seasonality_strength": 0.04,
+    "main_period": 34840.0,
+    "autocorr_lag1": 1.0
+  },
+  "tags": {
+    "non_stationary": false,
+    "strong_trend": false,
+    "strong_seasonality": false,
+    "high_noise": false,
+    "has_missing_values": false
+  },
+  "semantic_info": {
+    "dataset_name_pretty": "Electricity Transformer Temperature (Minute Level)",
+    "domain": "Energy",
+    "description": "The dataset 'ETTm1', likely representing Electricity Transformer Temperature measurements, contains minute-level data with seven key metrics. This dataset is stationary as indicated by the ADF test, but it shows low trend linearity and minimal seasonality strength, suggesting a relatively stable pattern over time with subtle fluctuations. The absence of missing values and moderate coefficients of variation imply a well-behaved dataset for modeling. Despite the weak trend and seasonality, the dataset may present challenges due to its size and complexity when making longer horizon predictions.",
+    "recommended_model_types": [
+      "Linear Models",
+      "PatchTST",
+      "Non-stationary Transformers"
+    ],
+    "reasoning_for_recommendation": "Given the stationary nature and slight trend presence, models such as linear baselines or normalization-based transformers are well-suited to capture subtle patterns without overfitting."
+  }
+}

@@ -1,0 +1,53 @@
+{
+  "meta": {
+    "dataset_name": "ETTm2",
+    "file_name": "ETTm2.csv",
+    "task_type": "MTS",
+    "num_rows": 69680,
+    "num_cols": 7,
+    "freq": "Unknown",
+    "prediction_settings": {
+      "horizons": [
+        96,
+        192,
+        336,
+        720
+      ],
+      "lookback": 96
+    }
+  },
+  "stats": {
+    "missing_rate": 0.0,
+    "mean": 26.61,
+    "std": 11.89,
+    "cv": 0.45,
+    "skewness": 0.1,
+    "kurtosis": -0.81,
+    "adf_p_value": 0.0,
+    "is_stationary_adf": true,
+    "trend_linearity_r2": 0.02,
+    "trend_slope": -0.0001,
+    "seasonality_strength": 0.05,
+    "main_period": 34840.0,
+    "autocorr_lag1": 1.0
+  },
+  "tags": {
+    "non_stationary": false,
+    "strong_trend": false,
+    "strong_seasonality": false,
+    "high_noise": false,
+    "has_missing_values": false
+  },
+  "semantic_info": {
+    "dataset_name_pretty": "Electricity Transformer Temperature (Minute-level)",
+    "domain": "Energy",
+    "description": "The ETTm2 dataset contains minute-level measurements related to electricity transformer temperatures. It appears to be well-maintained, with no missing data and a stationary nature confirmed by the ADF test. The dataset displays low seasonality and trend, however, it is characterized by consistent patterns, as indicated by high autocorrelation at lag 1. This stability suggests reliable long-term dependencies in the data, making it suitable for multistep time-series forecasting.",
+    "recommended_model_types": [
+      "Decomposition Transformers",
+      "Linear Models",
+      "Autoregressive Models",
+      "Traditional Time-Series Models"
+    ],
+    "reasoning_for_recommendation": "Given the stationary nature and high autocorrelation, decomposition and linear models can effectively model consistent patterns, while traditional autoregressive models can leverage the strong long-term dependencies."
+  }
+}

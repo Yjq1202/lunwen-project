@@ -1,0 +1,104 @@
+{
+  "model_name": "Nonstationary_Transformer",
+  "Primary Task Type": "Multitask Time Series Modeling (Long-/Short-term Forecasting, Imputation, Anomaly Detection, Classification)",
+  "Model Architecture Category": "Transformer-based (Encoder-only for some tasks; Encoder-Decoder for forecasting) with De-stationary Attention",
+  "Core Mechanism & Structure": "A Transformer backbone with standard (value+temporal+positional) embeddings and stacked Encoder/Decoder layers (MHSA + FFN via 1x1 convs). The key modification is De-stationary Attention (DSAttention), which rescales and shifts the pre-softmax attention logits using two learned, sample-specific de-stationary factors: a positive scalar τ (temperature-like scaling) and a per-time-step bias vector δ. These factors are predicted from raw input and simple statistics (mean/std) by small CNN+MLP 'Projector' networks. The model performs per-sample normalization (mean/std) before encoding and de-normalizes outputs afterward; forecasting uses a decoder with causal self-attention and encoder-decoder cross-attention, while imputation/anomaly use an encoder followed by a linear projection, and classification flattens encoder outputs for a linear classifier.",
+  "Core Innovations": "1) De-stationary Attention (DSAttention): modifies attention logits as (QK^T)*τ + δ to adapt attention to non-stationary series. 2) Learned de-stationary factor generators (tau_learner, delta_learner): CNN-over-time + MLP conditioned on raw series and (std/mean) statistics to produce τ and δ per sample. 3) Task-unified design: same encoder backbone reused across forecasting/imputation/anomaly/classification with task-specific heads (decoder vs projection vs flatten+classifier) and consistent normalize→model→denormalize workflow.",
+  "Key Technical Details": {
+    "Input Embedding": "DataEmbedding = TokenEmbedding (Conv1d over variables with circular padding) + TemporalEmbedding/TimeFeatureEmbedding (calendar features) + fixed sinusoidal PositionalEmbedding; dropout applied. Forecasting uses enc_embedding and dec_embedding.",
+    "Feature Extraction": "Stacked Transformer Encoder/Decoder layers with multi-head attention (AttentionLayer wrapping DSAttention) and position-wise FFN implemented as Conv1d(1x1) d_model→d_ff→d_model with residual + LayerNorm. Forecasting decoder uses causal self-attention and cross-attention to encoder outputs.",
+    "Positional Encoding": "Absolute fixed sinusoidal positional embedding (PositionalEmbedding) added to token embeddings (and temporal embeddings when available).",
+    "Non-stationarity Handling": "Explicit per-sample normalization (subtract mean, divide by std) in forecast/anomaly/classification; mask-aware normalization for imputation. Additionally, de-stationary factors τ (exp of projector output) and δ (sequence-length vector) are injected into attention logits; outputs are de-normalized (×std + mean)."
+  },
+  "Evidence": {
+    "Direct Observations": [
+      {
+        "claim": "Implements De-stationary Attention (DSAttention) that modifies attention logits with learned tau and delta",
+        "evidence": "layers/SelfAttention_Family.py: class DSAttention; scores = einsum(Q,K) * tau + delta; tau and delta are unsqueezed and applied before softmax."
+      },
+      {
+        "claim": "Learns de-stationary factors tau (scalar) and delta (length-S vector) via Projector modules using Conv1d + MLP",
+        "evidence": "models/Nonstationary_Transformer.py: class Projector uses nn.Conv1d(in_channels=seq_len, out_channels=1, padding_mode='circular') then concatenates with stats and passes through Linear/ReLU stack; Model defines self.tau_learner(output_dim=1) and self.delta_learner(output_dim=seq_len)."
+      },
+      {
+        "claim": "Uses an Encoder-Decoder Transformer for forecasting and encoder-only heads for imputation/anomaly; classification flattens encoder outputs",
+        "evidence": "models/Nonstationary_Transformer.py: if task_name in {long_term_forecast, short_term_forecast} constructs Decoder; if imputation/anomaly constructs self.projection Linear(d_model->c_out); classification uses projection Linear(d_model*seq_len -> num_class) with GELU+Dropout and reshape."
+      },
+      {
+        "claim": "Applies explicit per-sample normalization and de-normalization around the Transformer",
+        "evidence": "models/Nonstationary_Transformer.py: forecast/anomaly do mean_enc=x_enc.mean(1); std_enc=sqrt(var+1e-5); x_enc=(x_enc-mean)/std; outputs are scaled back: dec_out*std_enc+mean_enc. Imputation uses mask-aware mean/std."
+      },
+      {
+        "claim": "Uses absolute sinusoidal positional embeddings and temporal embeddings (calendar/time features) in DataEmbedding",
+        "evidence": "layers/Embed.py: PositionalEmbedding builds sin/cos table; DataEmbedding forward adds value_embedding + temporal_embedding(x_mark) + position_embedding."
+      },
+      {
+        "claim": "Attention is multi-head via separate linear projections and an output projection",
+        "evidence": "layers/SelfAttention_Family.py: class AttentionLayer defines query_projection/key_projection/value_projection/out_projection and reshapes to (B,L,H,dim)."
+      },
+      {
+        "claim": "Feed-forward blocks are implemented with 1x1 Conv1d layers (pointwise conv) inside EncoderLayer/DecoderLayer",
+        "evidence": "layers/Transformer_EncDec.py: EncoderLayer has conv1(d_model->d_ff,k=1) and conv2(d_ff->d_model,k=1) with activation and dropout; similarly in DecoderLayer."
+      },
+      {
+        "claim": "Forecasting decoder uses causal self-attention (mask_flag=True) and cross-attention (mask_flag=False) both using DSAttention",
+        "evidence": "models/Nonstationary_Transformer.py: DecoderLayer self-attention uses DSAttention(True, ...); cross-attention uses DSAttention(False, ...). DSAttention with mask_flag=True applies TriangularCausalMask when attn_mask is None."
+      }
+    ],
+    "Unknown / Not in Code": [
+      "Any explicit RevIN module or reversible instance normalization class (not present in provided files).",
+      "Any explicit series decomposition blocks (trend/seasonal) in the shown model path.",
+      "Explicit probabilistic forecasting head (e.g., distribution parameters); outputs appear deterministic via Linear projection."
+    ]
+  },
+  "Inferred Suitability": {
+    "Strengths": [
+      {
+        "label": "Non-stationary time series adaptation",
+        "why": "Attention logits are conditioned on sample-specific τ (temperature scaling) and δ (time-dependent bias), plus explicit normalization/de-normalization, which can reduce sensitivity to scale/mean drift",
+        "conditions": "Datasets with strong distribution shift over time, varying amplitude/mean across instances, or covariate shift between history and prediction window",
+        "confidence": "high"
+      },
+      {
+        "label": "Versatile multi-task backbone",
+        "why": "Same encoder supports forecasting, imputation, anomaly detection, and classification via different heads, reducing engineering effort and enabling transfer of representation learning",
+        "conditions": "When tasks share the same input modality (multivariate sequences) and similar sampling frequency/feature schema",
+        "confidence": "high"
+      },
+      {
+        "label": "Expressive temporal modeling with covariates",
+        "why": "Combines convolutional token embedding, temporal/calendar embeddings, positional embeddings, and multi-head attention, enabling use of known time features",
+        "conditions": "When time stamps (hour/day/month etc.) or engineered time features are available and informative",
+        "confidence": "medium"
+      }
+    ],
+    "Weaknesses": [
+      {
+        "label": "Quadratic time/memory in sequence length",
+        "why": "DSAttention is a full attention variant (einsum producing BxHxLxS scores) without sparse/linear approximation in the used path",
+        "conditions": "Long context lengths (e.g., L in the thousands) or large batch sizes on limited GPU memory",
+        "confidence": "high"
+      },
+      {
+        "label": "Risk of instability or overfitting from learned τ, δ",
+        "why": "τ is exponentiated (tau_learner(...).exp()), potentially producing large scaling of logits; δ adds unconstrained biases per time step",
+        "conditions": "Small datasets, noisy series, or weak regularization; especially if projector capacity (p_hidden_layers/dims) is large",
+        "confidence": "medium"
+      },
+      {
+        "label": "Limited explicit inductive bias for seasonality/trend decomposition",
+        "why": "Model relies on attention + embeddings + normalization; no explicit decomposition module is used in this model definition",
+        "conditions": "Strongly periodic series where decomposition-based models (e.g., Autoformer-style) typically excel, or when interpretability of trend/seasonal parts is required",
+        "confidence": "medium"
+      }
+    ]
+  },
+  "Resource Requirements & Complexity": "Per layer, compute is dominated by full attention: O(B * H * L * S * d_head) (typically S≈L for self-attention; cross-attention uses S=enc_len). Memory includes storing attention scores O(B * H * L * S) during training. FFN cost is O(B * L * d_model * d_ff). Additional overhead from tau/delta Projectors is minor relative to attention: a Conv1d over the (S,E) tensor plus a small MLP (input 2*enc_in, output 1 or seq_len). Parameter count scales like standard Transformer (QKV/out projections and FFN) plus small projector networks.",
+  "Paper Link": "https://openreview.net/pdf?id=ucNDIDRNjjv",
+  "_source_files": [
+    "models/Nonstationary_Transformer.py",
+    "layers/Transformer_EncDec.py",
+    "layers/SelfAttention_Family.py",
+    "layers/Embed.py"
+  ]
+}

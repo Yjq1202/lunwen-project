@@ -1,0 +1,110 @@
+{
+  "model_name": "PAttn",
+  "Primary Task Type": "Multivariate time series forecasting (direct multi-horizon prediction)",
+  "Model Architecture Category": "Transformer-based (patchified encoder-only Transformer with full self-attention)",
+  "Core Mechanism & Structure": "The model normalizes the input sequence per variable (channel-wise across time), then converts each variable’s history into overlapping 1D temporal patches via replication padding + unfold. Each patch (length=patch_len) is linearly projected to a d_model token embedding. Tokens are processed by an encoder-only Transformer stack (here: a single EncoderLayer) using multi-head scaled dot-product FullAttention and a position-wise feed-forward implemented as 1x1 Conv1d layers (d_model→d_ff→d_model) with residual connections and LayerNorm. Finally, the per-variable token outputs are flattened across all patches and projected by a linear head to produce the full pred_len horizon for each variable, followed by de-normalization back to the original scale.",
+  "Core Innovations": "1) Patch-wise tokenization of 1D time series per variable (overlapping patches with stride) to shorten token length compared to raw timesteps while preserving local temporal structure. 2) Encoder-only forecasting head that directly maps the entire encoded patch sequence to a multi-step horizon via flatten+Linear, avoiding an autoregressive decoder. 3) Built-in per-sample, per-variable normalization/de-normalization (mean/std over time) to mitigate non-stationarity without an explicit RevIN module.",
+  "Key Technical Details": {
+    "Input Embedding": "Overlapping temporal patch embedding per channel: ReplicationPad1d((0,stride)) -> unfold(size=patch_len, step=stride) -> Linear(patch_len, d_model). Tokens are created independently for each variable by reshaping (b,c,m,l)->(b*c,m,l).",
+    "Feature Extraction": "Encoder-only Transformer with multi-head FullAttention (scaled dot-product) and FFN implemented by 1x1 Conv1d layers inside EncoderLayer; residual + dropout + LayerNorm. Only 1 encoder layer is instantiated in models/PAttn.py.",
+    "Positional Encoding": "No explicit positional encoding is present in the provided model (no sinusoidal/learnable positional embeddings added to tokens).",
+    "Non-stationarity Handling": "Explicit normalization in Model.forward: subtract mean over time and divide by std over time for each variable, then de-normalize outputs using the stored mean/std."
+  },
+  "Evidence": {
+    "Direct Observations": [
+      {
+        "claim": "Per-sample, per-variable normalization and de-normalization is performed inside the model forward pass.",
+        "evidence": "models/PAttn.py: means = x_enc.mean(1, keepdim=True); x_enc = x_enc - means; stdev = sqrt(var(...)+1e-5); x_enc /= stdev; and later dec_out = dec_out * stdev[...] + means[...]."
+      },
+      {
+        "claim": "Uses overlapping patching with replication padding and unfold to create patch tokens.",
+        "evidence": "models/PAttn.py: self.padding_patch_layer = nn.ReplicationPad1d((0, self.stride)); x_enc = self.padding_patch_layer(x_enc); x_enc = x_enc.unfold(dimension=-1, size=self.patch_size, step=self.stride)."
+      },
+      {
+        "claim": "Patch embedding is a linear projection from patch_len to d_model.",
+        "evidence": "models/PAttn.py: self.in_layer = nn.Linear(self.patch_size, self.d_model); enc_out = self.in_layer(x_enc)."
+      },
+      {
+        "claim": "Encoder-only Transformer is used; no decoder is instantiated in the main model.",
+        "evidence": "models/PAttn.py: self.encoder = Encoder([...]); forward uses dec_out, _ = self.encoder(enc_out) and there is no Decoder(...) usage."
+      },
+      {
+        "claim": "Self-attention mechanism in the encoder is FullAttention wrapped by AttentionLayer (multi-head projections).",
+        "evidence": "models/PAttn.py: EncoderLayer(AttentionLayer(FullAttention(False, configs.factor,...), configs.d_model, configs.n_heads), ...). layers/SelfAttention_Family.py defines FullAttention and AttentionLayer with Q/K/V linear projections and scaled dot-product attention."
+      },
+      {
+        "claim": "The encoder feed-forward block is implemented via 1x1 Conv1d layers with activation and residual + LayerNorm.",
+        "evidence": "layers/Transformer_EncDec.py: EncoderLayer has conv1 = Conv1d(d_model,d_ff,1), conv2 = Conv1d(d_ff,d_model,1), activation=relu/gelu, residual connections and LayerNorms norm1/norm2."
+      },
+      {
+        "claim": "Final forecasting head flattens all patch tokens and projects to pred_len for each variable.",
+        "evidence": "models/PAttn.py: self.out_layer = nn.Linear(self.d_model * self.patch_num, configs.pred_len); dec_out rearrange to b c (m l); dec_out = self.out_layer(dec_out); then permute to [B, pred_len, C]."
+      },
+      {
+        "claim": "The code references a paper link.",
+        "evidence": "models/PAttn.py docstring: \"Paper link: https://arxiv.org/abs/2406.16964\"."
+      }
+    ],
+    "Unknown / Not in Code": [
+      "No explicit positional encoding module or positional embedding addition is shown in models/PAttn.py.",
+      "No explicit decoder/cross-attention path is used by this model, even though Decoder/DecoderLayer are defined in layers/Transformer_EncDec.py.",
+      "No explicit RevIN module/class is present in the provided code (normalization is done manually in forward).",
+      "Although DSAttention/ProbAttention/ReformerLayer/TwoStageAttentionLayer/Fourier* modules are defined in layers/SelfAttention_Family.py, models/PAttn.py uses only FullAttention."
+    ]
+  },
+  "Inferred Suitability": {
+    "Strengths": [
+      {
+        "label": "Direct multi-horizon forecasting (non-autoregressive)",
+        "why": "The head maps encoded patch tokens directly to pred_len via a single linear projection, enabling one-shot horizon prediction without iterative decoding.",
+        "conditions": "When the task is fixed-horizon forecasting with pred_len known at training/inference time.",
+        "confidence": "high"
+      },
+      {
+        "label": "Handles moderate non-stationarity via per-sample normalization",
+        "why": "Mean/std normalization over the input window reduces scale/level shifts; de-normalization restores original scale.",
+        "conditions": "When non-stationarity is largely affine (level/scale changes) within each input window.",
+        "confidence": "high"
+      },
+      {
+        "label": "Reduced token length compared to point-wise Transformers",
+        "why": "Patching converts seq_len timesteps into ~patch_num tokens, potentially lowering attention cost and emphasizing local temporal patterns within patches.",
+        "conditions": "When patch_len and stride are chosen so patch_num << seq_len (e.g., long histories with moderate overlap).",
+        "confidence": "medium"
+      }
+    ],
+    "Weaknesses": [
+      {
+        "label": "Quadratic attention cost in number of patches",
+        "why": "FullAttention computes scores of shape [B, H, L, S], giving O(patch_num^2) time/memory per layer.",
+        "conditions": "When patch_num is large (e.g., very long seq_len, small stride, heavy overlap) or batch*C is large due to (b*c) reshaping.",
+        "confidence": "high"
+      },
+      {
+        "label": "No explicit positional encoding may limit order sensitivity",
+        "why": "The model does not add positional embeddings; pure self-attention is permutation-equivariant aside from structure induced by patching and boundary effects.",
+        "conditions": "When precise temporal order within the patch sequence is crucial and cannot be inferred from content alone.",
+        "confidence": "medium"
+      },
+      {
+        "label": "Limited cross-variable modeling inside attention",
+        "why": "Variables are reshaped to (B*C, patch_num, d_model) and encoded independently; interactions across channels only happen implicitly through shared weights, not via attention between channels.",
+        "conditions": "When forecasting depends strongly on contemporaneous/lagged relationships between different variables (multivariate coupling).",
+        "confidence": "high"
+      },
+      {
+        "label": "Capacity may be low for complex dynamics",
+        "why": "Only one encoder layer is instantiated (for l in range(1)), and the output head is a single linear map from flattened tokens.",
+        "conditions": "When the dataset requires deeper hierarchical representations or long-range nonlinear dependencies beyond what a 1-layer encoder can capture.",
+        "confidence": "medium"
+      }
+    ]
+  },
+  "Resource Requirements & Complexity": "Let P = patch_num ≈ (seq_len - patch_len)/stride + 2, D=d_model, H=n_heads. The encoder uses FullAttention with O((B*C) * H * P^2) attention score computation and memory, plus FFN cost O((B*C) * P * D * d_ff). The output layer has parameters (D*P)×pred_len, which can become large when P is large; it also requires flattening all tokens per variable. Overall parameter count is moderate for the encoder (single layer) but the final linear head can dominate for large P and pred_len.",
+  "Paper Link": "https://arxiv.org/abs/2406.16964",
+  "_source_files": [
+    "models/PAttn.py",
+    "layers/Transformer_EncDec.py",
+    "layers/SelfAttention_Family.py"
+  ]
+}

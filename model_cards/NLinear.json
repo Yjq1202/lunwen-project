@@ -1,0 +1,90 @@
+{
+  "model_name": "NLinear",
+  "Primary Task Type": "Long-term Forecasting (multi-step time series prediction)",
+  "Model Architecture Category": "MLP-based / Linear model (per-channel or shared linear projection)",
+  "Core Mechanism & Structure": "A simple normalization-then-linear extrapolation model: it subtracts the last observed value per channel (a last-value centering step), applies a learned linear map from past window length (seq_len) to forecast horizon (pred_len) either shared across channels or independently per channel, then adds back the last value to recover the absolute level. No encoder-decoder stack, no attention, no recurrence, and no convolution; forecasting is performed via direct linear projection along the time dimension.",
+  "Core Innovations": "1) Last-value centering (subtracting x[t_last]) to reduce level/non-stationarity effects before linear projection, then re-adding it afterward. 2) Optional per-variable (per-channel) independent linear heads vs. a shared linear head across all channels, enabling either parameter sharing or channel-specific dynamics. 3) Direct seq_len→pred_len linear mapping for multi-step output in one shot (no autoregressive decoding).",
+  "Key Technical Details": {
+    "Input Embedding": "None. Raw input tensor x of shape [B, L, C] is used directly; the model only permutes dimensions when using a shared linear layer.",
+    "Feature Extraction": "Pure linear projection over the time axis: nn.Linear(seq_len, pred_len) applied either (a) per channel via ModuleList of independent Linear layers, or (b) shared by permuting to [B, C, L], applying one Linear, then permuting back.",
+    "Positional Encoding": "No positional encoding (the linear layer weights implicitly learn time-position contributions within the fixed seq_len window).",
+    "Non-stationarity Handling": "Deterministic last-value centering: subtracts the final timestep (per channel) before projection and adds it back after; uses detach() on the last value to stop gradients through the reference level."
+  },
+  "Evidence": {
+    "Direct Observations": [
+      {
+        "claim": "Implements a linear seq_len→pred_len forecasting head (no attention/encoder/decoder).",
+        "evidence": "models/NLinear.py: __init__ defines self.Linear = nn.Linear(self.seq_len, self.pred_len) or per-channel ModuleList of nn.Linear(self.seq_len, self.pred_len); forward applies self.Linear to produce [Batch, pred_len, Channel]."
+      },
+      {
+        "claim": "Applies last-timestep centering and then restores the level (a simple normalization strategy).",
+        "evidence": "models/NLinear.py forward: seq_last = x[:,-1:,:].detach(); x = x - seq_last; ...; x = x + seq_last"
+      },
+      {
+        "claim": "Supports per-channel independent linear layers controlled by configs.individual.",
+        "evidence": "models/NLinear.py: if self.individual: self.Linear = nn.ModuleList(); for i in range(self.channels): self.Linear.append(nn.Linear(self.seq_len,self.pred_len)); forward loops output[:,:,i] = self.Linear[i](x[:,:,i])"
+      },
+      {
+        "claim": "Shared linear layer case mixes no information across channels (applies same temporal projection to each channel).",
+        "evidence": "models/NLinear.py forward (else branch): x = self.Linear(x.permute(0,2,1)).permute(0,2,1) — Linear is applied on last dimension (time), with channels as batch-like dimension."
+      },
+      {
+        "claim": "Stops gradients through the reference last value used for centering.",
+        "evidence": "models/NLinear.py forward: seq_last = x[:,-1:,:].detach()"
+      }
+    ],
+    "Unknown / Not in Code": [
+      "Any attention mechanism (full/sparse/linear attention) is not present.",
+      "Any explicit encoder-decoder architecture is not present.",
+      "Any positional/time-feature embeddings are not present.",
+      "Any series decomposition, RevIN, LayerNorm/BatchNorm, or frequency-domain modules are not present."
+    ]
+  },
+  "Inferred Suitability": {
+    "Strengths": [
+      {
+        "label": "Very fast and memory-efficient forecasting baseline",
+        "why": "Only uses one (or C) small linear layers; computation is a single matrix multiply per channel with no quadratic-time components.",
+        "conditions": "When seq_len and pred_len are moderate and you need high throughput (e.g., many series, large batch sizes).",
+        "confidence": "high"
+      },
+      {
+        "label": "Works well when dynamics are approximately linear after de-meaning by last value",
+        "why": "Last-value centering removes level shifts; the remaining residual can be modeled by a linear mapping from history to future.",
+        "conditions": "Series with strong local continuity/level shifts but relatively simple temporal patterns (e.g., short-term trends, smooth signals).",
+        "confidence": "medium"
+      },
+      {
+        "label": "Robustness to level offsets / local non-stationarity",
+        "why": "Subtracting the last observed value makes the model focus on changes relative to the most recent level rather than absolute scale.",
+        "conditions": "When series exhibit varying baselines across windows (e.g., drifting mean) and you use sliding windows.",
+        "confidence": "medium"
+      }
+    ],
+    "Weaknesses": [
+      {
+        "label": "Limited capacity for nonlinear or regime-switching dynamics",
+        "why": "The core mapping is purely linear with no nonlinear feature extractor, attention, or deep stack.",
+        "conditions": "Complex seasonality, sharp events, nonlinear interactions, or multiscale patterns requiring hierarchical modeling.",
+        "confidence": "high"
+      },
+      {
+        "label": "No explicit cross-channel interaction (unless you rely on independent heads only)",
+        "why": "Both modes apply temporal projection per channel; neither mode mixes information across different channels/variables.",
+        "conditions": "Multivariate forecasting where variables are strongly coupled and cross-variable dependencies are important.",
+        "confidence": "high"
+      },
+      {
+        "label": "Fixed-window dependence and potential sensitivity to seq_len choice",
+        "why": "Uses a fixed nn.Linear over the seq_len positions; it cannot adaptively attend beyond the chosen window.",
+        "conditions": "When long-range dependencies exceed seq_len or when optimal receptive field varies over time.",
+        "confidence": "medium"
+      }
+    ]
+  },
+  "Resource Requirements & Complexity": "Parameter count is small: shared mode has ~pred_len*seq_len (+bias) parameters; individual mode has ~C*pred_len*seq_len (+biases) parameters. Compute is O(B*C*seq_len*pred_len) for a forward pass (essentially dense GEMMs). Memory footprint is minimal compared to deep sequence models; no O(L^2) attention matrices.",
+  "Paper Link": "None",
+  "_source_files": [
+    "models/NLinear.py"
+  ]
+}

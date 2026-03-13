@@ -1,0 +1,112 @@
+{
+  "model_name": "Pyraformer",
+  "Primary Task Type": "Time-series forecasting (long-term & short-term); also supports imputation, anomaly detection, and classification",
+  "Model Architecture Category": "Transformer-based encoder-only model with pyramidal (multi-scale) masked self-attention + convolutional downsampling",
+  "Core Mechanism & Structure": "An encoder-only Transformer that first embeds the multivariate time series with a Conv1d token embedding plus (optional) temporal feature embedding and sinusoidal positional encoding. It then constructs a pyramid of downsampled sequences using a bottleneck Conv1d stack (stride = window_size per pyramid level), concatenates the original and multi-scale tokens into one longer sequence, and applies stacked masked full self-attention layers using a custom sparse connectivity mask that enforces (a) local intra-scale neighborhood attention and (b) inter-scale cross-resolution links. Finally, it gathers per-original-timestep multi-scale representations via precomputed reference indexes and concatenates them along the channel dimension; task-specific linear heads map this representation to forecasting, reconstruction (imputation/anomaly), or classification outputs.",
+  "Core Innovations": "Pyramidal Attention Masking (PAM) implemented as a handcrafted sparse attention mask over a concatenated multi-scale token sequence; bottleneck convolutional pyramid (CSCM-like) that downsamples in time to create multi-resolution tokens cheaply; multi-scale feature gathering (refer_points + torch.gather) to fuse representations from all pyramid levels back to the original time resolution before prediction.",
+  "Key Technical Details": {
+    "Input Embedding": "DataEmbedding: TokenEmbedding via circular-padded Conv1d(kernel=3) projecting enc_in -> d_model, plus TemporalEmbedding (hour/weekday/day/month/minute) or TimeFeatureEmbedding (Linear) depending on embed_type, plus sinusoidal PositionalEmbedding; dropout applied.",
+    "Feature Extraction": "Bottleneck_Construct: Linear down-projection d_model->d_inner, then multiple ConvLayer blocks (Conv1d stride=window_size, BN, ELU) to create downsampled sequences; concatenated with original tokens and LayerNorm. EncoderLayer: AttentionLayer wrapping FullAttention(mask_flag=True) with provided sparse mask, followed by PositionwiseFeedForward (2-layer MLP with GELU, residual, LayerNorm).",
+    "Positional Encoding": "Absolute sinusoidal positional encoding (PositionalEmbedding) added to token embeddings; still used even when temporal marks are present.",
+    "Non-stationarity Handling": "For short_term_forecast only: per-sample, per-channel normalization (subtract mean over time and divide by std over time) and de-normalization of outputs. No RevIN module is used."
+  },
+  "Evidence": {
+    "Direct Observations": [
+      {
+        "claim": "Encoder-only architecture (no decoder block); forecasting uses last encoder token representation",
+        "evidence": "models/Pyraformer.py: long_forecast/short_forecast do enc_out = self.encoder(...)[:, -1, :] then linear projection; no decoder module instantiated."
+      },
+      {
+        "claim": "Multi-task heads for long/short forecasting, imputation, anomaly detection, classification",
+        "evidence": "models/Pyraformer.py: __init__ branches on configs.task_name and defines different projection layers; forward routes to long_forecast/short_forecast/imputation/anomaly_detection/classification."
+      },
+      {
+        "claim": "Pyramidal attention mask is explicitly constructed to enforce local (intra-scale) + inter-scale connectivity",
+        "evidence": "layers/Pyraformer_EncDec.py: get_mask() builds mask with 'get intra-scale mask' (inner_size window) and 'get inter-scale mask' linking adjacent scales; returns mask=(1-mask).bool()."
+      },
+      {
+        "claim": "Full (softmax) attention is used, but constrained by a custom boolean mask",
+        "evidence": "layers/Pyraformer_EncDec.py: EncoderLayer uses AttentionLayer(FullAttention(mask_flag=True,...)); forward wraps slf_attn_mask into RegularMask and passes to FullAttention which does scores.masked_fill_(attn_mask.mask, -np.inf) then softmax."
+      },
+      {
+        "claim": "Convolutional downsampling pyramid with bottleneck channels is used before attention",
+        "evidence": "layers/Pyraformer_EncDec.py: Encoder has self.conv_layers = Bottleneck_Construct(...); Bottleneck_Construct applies Linear down to d_inner then ConvLayer(Conv1d stride=window_size) repeatedly, concatenates multi-scale tokens with original, then LayerNorm."
+      },
+      {
+        "claim": "Multi-scale feature fusion back to original sequence length via precomputed reference indices and torch.gather",
+        "evidence": "layers/Pyraformer_EncDec.py: refer_points() builds indexes; Encoder.forward repeats indexes and does all_enc = torch.gather(seq_enc, 1, indexes) then reshapes to [B, all_size[0], -1]."
+      },
+      {
+        "claim": "Embedding includes Conv1d token embedding, temporal embedding, and sinusoidal positional embedding",
+        "evidence": "layers/Embed.py: DataEmbedding combines TokenEmbedding + TemporalEmbedding/TimeFeatureEmbedding + PositionalEmbedding; TokenEmbedding is Conv1d(kernel=3, padding_mode='circular')."
+      },
+      {
+        "claim": "Short-term forecasting applies manual mean/std normalization over the time dimension",
+        "evidence": "models/Pyraformer.py: short_forecast computes mean_enc=x_enc.mean(1), std_enc=sqrt(var(...)+1e-5), normalizes x_enc, then de-normalizes dec_out = dec_out*std_enc + mean_enc."
+      },
+      {
+        "claim": "Classification head masks padded positions using x_mark_enc and flattens sequence",
+        "evidence": "models/Pyraformer.py: classification(): output = output * x_mark_enc.unsqueeze(-1); output.reshape(batch, -1) then linear to num_class."
+      },
+      {
+        "claim": "Paper link is specified in the main model docstring",
+        "evidence": "models/Pyraformer.py: docstring includes 'Paper link: https://openreview.net/pdf?id=0EXmFzUn5I'."
+      }
+    ],
+    "Unknown / Not in Code": [
+      "RevIN or other learned reversible normalization layers (no RevIN class referenced/imported here).",
+      "A transformer decoder, cross-attention, or autoregressive causal decoding loop (not present; only encoder + projection).",
+      "Use of DSAttention/ProbAttention/Reformer/TwoStageAttention/Fourier/AutoCorrelation within this Pyraformer encoder (they exist in layers/SelfAttention_Family.py but Pyraformer_EncDec.py hardcodes FullAttention)."
+    ]
+  },
+  "Inferred Suitability": {
+    "Strengths": [
+      {
+        "label": "Efficient long-sequence modeling via sparse pyramidal connectivity",
+        "why": "Attention uses FullAttention but with a sparse mask that limits interactions to local neighborhoods and inter-scale links; plus convolutional downsampling reduces effective token counts at coarser scales",
+        "conditions": "When seq_len is large (hundreds to thousands) and long-range dependencies can be mediated through multi-scale links rather than dense all-pairs attention",
+        "confidence": "high"
+      },
+      {
+        "label": "Multi-resolution pattern capture (local + global)",
+        "why": "Downsampled pyramid tokens provide coarse summaries while intra-scale neighborhood attention preserves local detail; gathered multi-scale features are concatenated per timestep",
+        "conditions": "When data has both short-term fluctuations and longer seasonal/trend components",
+        "confidence": "high"
+      },
+      {
+        "label": "Versatility across tasks with shared encoder",
+        "why": "Same encoder feeds different linear heads for forecasting, imputation/anomaly reconstruction, and classification",
+        "conditions": "When tasks are aligned with sequence representation learning and simple readout suffices",
+        "confidence": "medium"
+      }
+    ],
+    "Weaknesses": [
+      {
+        "label": "Mask construction creates an O(S^2) attention matrix despite sparsity intent",
+        "why": "get_mask constructs a dense [seq_length x seq_length] boolean mask where seq_length = sum(all_size); FullAttention computes full score tensor then masks",
+        "conditions": "When seq_len is very large and GPU memory is tight; especially with many heads/layers",
+        "confidence": "high"
+      },
+      {
+        "label": "Forecasting head uses only the last timestep representation (single-token readout)",
+        "why": "long_forecast/short_forecast take encoder output at [:, -1, :] then project to pred_len*enc_in",
+        "conditions": "When accurate multi-step forecasts require richer use of the entire encoded sequence (e.g., local alignment, multi-horizon nuances) rather than a global summary",
+        "confidence": "medium"
+      },
+      {
+        "label": "Limited explicit non-stationarity modeling (except short-term normalization)",
+        "why": "Only short_term_forecast path normalizes by mean/std; no decomposition or learned normalization is applied for long-term/imputation/anomaly paths",
+        "conditions": "When the dataset has strong distribution shift, changing variance, or regime changes across time",
+        "confidence": "medium"
+      }
+    ]
+  },
+  "Resource Requirements & Complexity": "Let L=configs.seq_len and pyramid sizes all_size = [L, floor(L/w1), floor(L/(w1*w2)), ...]; total concatenated token length S = sum(all_size) ≈ L*(1 + 1/w1 + 1/(w1w2)+...). Attention computation in EncoderLayer uses FullAttention over S tokens, thus compute/memory scale as O(B * n_heads * S^2) for score tensors, even though many entries are masked. Convolutional pyramid adds O(B * d_inner * L) per level via stride convs. Output representation concatenates (levels+1)*d_model channels per original timestep; forecasting head parameters scale as ((levels+1)*d_model) x (pred_len*enc_in) for forecasting, and classification head scales as ((levels+1)*d_model*seq_len) x num_class.",
+  "Paper Link": "https://openreview.net/pdf?id=0EXmFzUn5I",
+  "_source_files": [
+    "models/Pyraformer.py",
+    "layers/Pyraformer_EncDec.py",
+    "layers/SelfAttention_Family.py",
+    "layers/Embed.py"
+  ]
+}

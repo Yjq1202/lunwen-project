@@ -1,0 +1,93 @@
+{
+  "model_name": "TSMixer",
+  "Primary Task Type": "Time Series Forecasting (Long-term / Short-term)",
+  "Model Architecture Category": "MLP-based (Mixer-style residual MLP blocks)",
+  "Core Mechanism & Structure": "A stack of residual MLP mixer blocks that alternately mix information along the temporal dimension (token/sequence mixing via per-channel linear layers over seq_len) and along the feature/channel dimension (per-timestep linear layers over enc_in). After e_layers residual blocks, a linear projection maps the time axis from seq_len to pred_len (applied per channel), producing the forecast without an explicit decoder or attention.",
+  "Core Innovations": "1) Pure-MLP time-series mixer: replaces attention/recurrence with two-factorized MLP mixing (temporal mixing + channel mixing) inside residual blocks. 2) Very simple direct horizon projection: predicts pred_len via a linear layer on the time axis (seq_len -> pred_len) after mixing, avoiding autoregression/decoder. 3) Residual additive composition of temporal and channel mixing to stabilize deeper MLP stacks.",
+  "Key Technical Details": {
+    "Input Embedding": "No explicit embedding layer; inputs are used directly as x_enc with shape [B, L, D] (L=seq_len, D=enc_in).",
+    "Feature Extraction": "Two MLP pathways per block: (a) Temporal mixing: Linear(seq_len -> d_model) -> ReLU -> Linear(d_model -> seq_len) applied on x transposed to [B, D, L], then transposed back; (b) Channel mixing: Linear(enc_in -> d_model) -> ReLU -> Linear(d_model -> enc_in) applied on [B, L, D]. Both are residual-added to x.",
+    "Positional Encoding": "No positional encoding present in code; sequence order is handled implicitly by temporal linear mixing over the full seq_len axis.",
+    "Non-stationarity Handling": "None explicitly (no RevIN, decomposition, differencing, normalization layers in the provided code)."
+  },
+  "Evidence": {
+    "Direct Observations": [
+      {
+        "claim": "Implements a residual MLP block with separate temporal and channel mixing paths",
+        "evidence": "models/TSMixer.py: class ResBlock defines self.temporal (Linear(seq_len->d_model)->ReLU->Linear(d_model->seq_len)->Dropout) and self.channel (Linear(enc_in->d_model)->ReLU->Linear(d_model->enc_in)->Dropout); forward adds both residuals: x = x + temporal(...); x = x + channel(x)."
+      },
+      {
+        "claim": "Uses stacked blocks controlled by configs.e_layers",
+        "evidence": "models/TSMixer.py: Model.__init__ creates self.model = nn.ModuleList([ResBlock(configs) for _ in range(configs.e_layers)]) and iterates for i in range(self.layer) in forecast()."
+      },
+      {
+        "claim": "Forecast is produced by projecting the time dimension from seq_len to pred_len",
+        "evidence": "models/TSMixer.py: self.projection = nn.Linear(configs.seq_len, configs.pred_len); forecast(): enc_out = self.projection(x_enc.transpose(1,2)).transpose(1,2)."
+      },
+      {
+        "claim": "Only forecasting tasks are implemented (long_term_forecast and short_term_forecast)",
+        "evidence": "models/TSMixer.py: forward(): if task_name == 'long_term_forecast' or 'short_term_forecast' returns forecast output else raises ValueError('Only forecast tasks implemented yet')."
+      },
+      {
+        "claim": "No attention mechanism, encoder-decoder transformer, or convolution appears in the implementation",
+        "evidence": "models/TSMixer.py contains only nn.Linear/ReLU/Dropout/ModuleList and no attention-related modules/classes."
+      },
+      {
+        "claim": "Time-marker inputs are accepted but unused in computation",
+        "evidence": "models/TSMixer.py: forecast(self, x_enc, x_mark_enc, x_dec, x_mark_dec, mask=None) never references x_mark_enc/x_dec/x_mark_dec/mask; forward passes them through but does not use them."
+      }
+    ],
+    "Unknown / Not in Code": [
+      "Any explicit normalization (LayerNorm/BatchNorm), RevIN, or series decomposition",
+      "Any probabilistic output head (e.g., distribution parameters) or loss definition",
+      "Any explicit handling of missing values/masks (mask argument is unused)"
+    ]
+  },
+  "Inferred Suitability": {
+    "Strengths": [
+      {
+        "label": "Efficient long-context mixing without attention",
+        "why": "Temporal mixing uses linear layers over seq_len (no O(L^2) attention matrix), so compute/memory scale more like O(B*D*L*d_model) per block rather than quadratic in L",
+        "conditions": "When seq_len is large enough that full self-attention would be costly (e.g., hundreds to thousands of steps) and enc_in is moderate",
+        "confidence": "high"
+      },
+      {
+        "label": "Stable and simple training/inference",
+        "why": "Residual additions plus simple MLP components (ReLU + Dropout) generally train stably and allow straightforward parallel inference for all horizons via a single projection",
+        "conditions": "When forecasting is direct multi-horizon (non-autoregressive) and the dataset does not require complex cross-attention with future covariates",
+        "confidence": "high"
+      },
+      {
+        "label": "Captures cross-variable dependencies",
+        "why": "Channel-mixing MLP operates over enc_in at each timestep, enabling interactions among variables/features",
+        "conditions": "When multivariate correlations are important and enc_in is not extremely large",
+        "confidence": "medium"
+      }
+    ],
+    "Weaknesses": [
+      {
+        "label": "Fixed-length constraint tied to seq_len",
+        "why": "Temporal MLP and final projection are hard-coded Linear(seq_len -> d_model -> seq_len) and Linear(seq_len -> pred_len), which requires a fixed seq_len at train/test",
+        "conditions": "When inference requires variable input lengths or rolling windows of different sizes than training",
+        "confidence": "high"
+      },
+      {
+        "label": "Ignores known time features / covariates",
+        "why": "x_mark_enc/x_mark_dec are passed in but never used, so calendrical or future-known covariates cannot influence predictions",
+        "conditions": "When exogenous/time markers (holiday, hour-of-day, future covariates) materially affect the target",
+        "confidence": "high"
+      },
+      {
+        "label": "Limited inductive bias for local patterns and non-stationarity",
+        "why": "No convolution, no explicit trend/seasonal decomposition, and no normalization layers (e.g., RevIN); temporal mixing is a global linear transform over the whole window",
+        "conditions": "When series exhibit strong non-stationary level shifts, changing variance, or benefit from locality/multi-scale structures",
+        "confidence": "medium"
+      }
+    ]
+  },
+  "Resource Requirements & Complexity": "Per ResBlock, temporal path parameters are ~2*seq_len*d_model (plus biases) shared across channels, and channel path parameters are ~2*enc_in*d_model. Compute per block is dominated by temporal mixing: applying Linear(seq_len->d_model) and Linear(d_model->seq_len) on tensors of shape [B, D, L], roughly O(B*enc_in*seq_len*d_model). Memory is linear in B*L*D (no quadratic attention). Final projection adds O(B*enc_in*seq_len*pred_len) compute with parameters seq_len*pred_len.",
+  "Paper Link": "None",
+  "_source_files": [
+    "models/TSMixer.py"
+  ]
+}

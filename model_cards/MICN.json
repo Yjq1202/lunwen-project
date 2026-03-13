@@ -1,0 +1,103 @@
+{
+  "model_name": "MICN",
+  "Primary Task Type": "Time-series forecasting (long-term and short-term), with optional imputation / anomaly detection / classification heads",
+  "Model Architecture Category": "Hybrid decomposition + multi-scale convolutional (CNN-based) sequence model with embedding layers (Transformer-style sinusoidal + temporal embeddings); not an attention-based Transformer in the provided MICN forward path",
+  "Core Mechanism & Structure": "The model first performs multi-kernel moving-average series decomposition to split the input into seasonal (residual) and trend components. The trend is extrapolated with a learnable linear regression over the time axis (DLinear-style). The seasonal component is embedded using a token Conv1d embedding plus sinusoidal positional encoding and optional calendar/time-feature embedding, then passed through a stack of MIC blocks (multi-scale downsample→isometric-conv→upsample with residual/LN and a pointwise FFN). Multi-scale outputs are merged via a Conv2d across scales and projected to target channels; final forecast is seasonal_prediction + trend_extrapolation.",
+  "Core Innovations": "1) Multi-scale hybrid decomposition: averages multiple moving-average decompositions (series_decomp_multi) to stabilize seasonal/trend separation across scales. 2) MIC block for seasonal modeling: per-scale strided downsampling Conv1d + isometric Conv1d (after zero-prepend alignment) + transposed-conv upsampling, enabling multi-resolution feature extraction with residual normalization. 3) Explicit trend extrapolation via time-axis linear layer initialized to uniform averaging (DLinear-inspired), combined additively with learned seasonal prediction.",
+  "Key Technical Details": {
+    "Input Embedding": "DataEmbedding: TokenEmbedding via circular-padding Conv1d(kernel=3) to d_model, plus sinusoidal PositionalEmbedding and either TemporalEmbedding (fixed or learned categorical calendar embeddings) or TimeFeatureEmbedding (linear projection of continuous time features).",
+    "Feature Extraction": "Seasonal path: stacked MIC layers. Each MIC applies per-scale decomposition (series_decomp), then strided Conv1d downsampling, isometric Conv1d after zero-prepending for alignment, transposed Conv1d upsampling back to original length, multi-scale fusion via Conv2d over the scale dimension, then a 1x1 Conv1d FFN (expand 4x then contract) with LayerNorm residuals. Trend path: nn.Linear(seq_len -> pred_len) applied per channel.",
+    "Positional Encoding": "Absolute sinusoidal positional encoding (PositionalEmbedding) added in DataEmbedding; temporal/calendar embedding optionally added when x_mark is provided.",
+    "Non-stationarity Handling": "Explicit series decomposition into seasonal and trend via moving average (single and multi-kernel). Additional normalization via LayerNorm (and a custom my_Layernorm exists in dependencies but is not used by MICN model path). No RevIN in provided code."
+  },
+  "Evidence": {
+    "Direct Observations": [
+      {
+        "claim": "Uses multi-kernel moving-average series decomposition to produce seasonal and trend components",
+        "evidence": "layers/Autoformer_EncDec.py: class series_decomp_multi; models/MICN.py: self.decomp_multi = series_decomp_multi(decomp_kernel); used in forecast/imputation/anomaly_detection/classification"
+      },
+      {
+        "claim": "Trend is extrapolated with a Linear layer from seq_len to pred_len with DLinear-style uniform initialization",
+        "evidence": "models/MICN.py: self.regression = nn.Linear(configs.seq_len, configs.pred_len); self.regression.weight initialized to (1/pred_len)*ones; used in forecast(): trend = self.regression(trend.permute(...))"
+      },
+      {
+        "claim": "Seasonal path uses DataEmbedding with token Conv1d + sinusoidal positional encoding + optional temporal embedding",
+        "evidence": "layers/Embed.py: DataEmbedding combines TokenEmbedding, PositionalEmbedding, TemporalEmbedding/TimeFeatureEmbedding; models/MICN.py: self.dec_embedding = DataEmbedding(...); called in forecast/imputation/anomaly_detection/classification"
+      },
+      {
+        "claim": "Core seasonal feature extractor is a multi-scale CNN module (MIC) with downsampling Conv1d, isometric Conv1d, and ConvTranspose1d upsampling plus residual LayerNorm and FFN",
+        "evidence": "models/MICN.py: class MIC defines self.conv (stride=kernel), self.isometric_conv (Conv1d), self.conv_trans (ConvTranspose1d); conv_trans_conv() performs downsample→isometric→upsample and residual+LayerNorm; also defines conv1/conv2 1x1 FFN and norm1/norm2"
+      },
+      {
+        "claim": "Multi-scale outputs are fused across scales using Conv2d",
+        "evidence": "models/MICN.py: self.merge = torch.nn.Conv2d(in_channels=feature_size, out_channels=feature_size, kernel_size=(len(self.conv_kernel), 1)); forward(): mg concatenates multi[i].unsqueeze(1) then mg.permute(0,3,1,2) passed to merge"
+      },
+      {
+        "claim": "Supports multiple tasks via different forward branches: forecasting, imputation, anomaly detection, classification",
+        "evidence": "models/MICN.py: __init__ sets heads based on configs.task_name; forward() dispatches to forecast/imputation/anomaly_detection/classification"
+      },
+      {
+        "claim": "Autoformer-style Encoder/Decoder and attention layers exist in the repository but are not used in this MICN model forward path",
+        "evidence": "layers/Autoformer_EncDec.py defines Encoder/Decoder/EncoderLayer/DecoderLayer using attention, but models/MICN.py never instantiates Encoder/Decoder or any attention module"
+      },
+      {
+        "claim": "Paper link is provided in the model docstring",
+        "evidence": "models/MICN.py: class Model docstring: 'Paper link: https://openreview.net/pdf?id=zt53IDUR1U'"
+      }
+    ],
+    "Unknown / Not in Code": [
+      "Any explicit self-attention mechanism used by MICN Model (n_heads is passed around but not used inside MIC).",
+      "RevIN or other reversible instance normalization (no such class or usage shown).",
+      "Relative positional encoding or learnable positional embeddings (only fixed sinusoidal is present)."
+    ]
+  },
+  "Inferred Suitability": {
+    "Strengths": [
+      {
+        "label": "Efficient long-horizon forecasting without quadratic attention cost",
+        "why": "Seasonal modeling uses strided Conv1d downsampling + transposed Conv1d upsampling and 1x1 FFN, avoiding O(L^2) attention; trend is extrapolated by a single Linear over time",
+        "conditions": "When sequence length is large (e.g., L>=512) and attention-based models become expensive",
+        "confidence": "high"
+      },
+      {
+        "label": "Robustness to trend/seasonality mixture via explicit decomposition",
+        "why": "Separates trend with moving-average decomposition (multi-kernel average) and models seasonal residuals separately, then recombines",
+        "conditions": "When the time series exhibits clear trend + seasonal components or slowly varying trend",
+        "confidence": "high"
+      },
+      {
+        "label": "Multi-scale temporal feature capture",
+        "why": "Multiple conv_kernel scales are processed in parallel and merged (Conv2d over scales), enabling different receptive fields and resolutions",
+        "conditions": "When seasonality exists at multiple periods or dynamics vary across frequencies",
+        "confidence": "medium"
+      }
+    ],
+    "Weaknesses": [
+      {
+        "label": "Limited global content-based interactions compared to attention",
+        "why": "No explicit self-attention is used in MICN forward path; dependencies include attention-ready Autoformer blocks but they are unused here",
+        "conditions": "When forecasting depends on long-range, sparse, content-dependent dependencies (e.g., event-driven patterns) beyond convolutional inductive bias",
+        "confidence": "medium"
+      },
+      {
+        "label": "Potential edge artifacts / alignment sensitivity from striding and truncation",
+        "why": "Downsample/upsample path uses ConvTranspose1d then truncates to seq_len; also prepends zeros before isometric conv",
+        "conditions": "When precise boundary behavior matters (short sequences, sharp discontinuities, or irregular sampling)",
+        "confidence": "medium"
+      },
+      {
+        "label": "Decomposition assumes moving-average trend is appropriate",
+        "why": "Trend is defined as moving average with fixed kernel sizes; non-moving-average trends (piecewise, rapidly changing) may be misattributed to seasonal residual",
+        "conditions": "When trend changes abruptly or the series is highly non-stationary with regime shifts",
+        "confidence": "medium"
+      }
+    ]
+  },
+  "Resource Requirements & Complexity": "Compute is dominated by Conv1d/ConvTranspose1d and 1x1 Conv FFN. For each MIC layer and each scale: downsample Conv1d roughly O(B * d_model * L * k / s) with stride s=kernel_size, isometric Conv1d roughly O(B * d_model * (L/s) * k_iso), and upsample ConvTranspose1d roughly O(B * d_model * L * k). Multi-scale fusion uses Conv2d over (num_scales x length) with cost O(B * d_model * num_scales * L). Trend regression costs O(B * C * seq_len * pred_len). Parameter count scales with d_model^2 mainly through 1x1 conv expansion (d_model -> 4*d_model -> d_model) and per-scale conv kernels; typically lighter than Transformer attention layers for large L.",
+  "Paper Link": "https://openreview.net/pdf?id=zt53IDUR1U",
+  "_source_files": [
+    "models/MICN.py",
+    "layers/Embed.py",
+    "layers/Autoformer_EncDec.py"
+  ]
+}

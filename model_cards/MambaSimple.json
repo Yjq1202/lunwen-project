@@ -1,0 +1,101 @@
+{
+  "model_name": "MambaSimple",
+  "Primary Task Type": "Time series forecasting (short-term / long-term), direct multi-step prediction",
+  "Model Architecture Category": "State Space Model (SSM)-based (Mamba-style selective state space) with CNN token embedding and residual normalization blocks",
+  "Core Mechanism & Structure": "An encoder-only sequence model for multivariate time series forecasting. Inputs are first normalized per-sample across the time dimension (mean/std), then embedded via a convolutional token/value embedding plus (sinusoidal) absolute positional embedding and optional calendar/time embedding. The embedded sequence is processed by a stack of residual Mamba blocks: each block applies RMSNorm, then a MambaBlock that (1) linearly projects to two streams (content + residual gate), (2) applies a depthwise causal-ish 1D convolution over time, (3) applies SiLU nonlinearity, and (4) runs a selective state space model (SSM) where input-dependent parameters (delta, B, C) are generated per time step and used in a sequential selective scan recurrence. The result is gated by the residual stream (SiLU) and projected back to d_model. After the stack, RMSNorm and a linear head map to output channels; outputs are de-normalized back to the original scale and the last pred_len steps are returned.",
+  "Core Innovations": "1) Mamba-style input-dependent selective state space (delta, B, C conditioned on x) implemented via a selective scan recurrence, enabling linear-in-sequence-length state updates (algorithmically O(L) in the recurrence). 2) Hybrid local+global mixing: a depthwise 1D convolution (local temporal mixing) precedes the SSM recurrence (long-range dependency via state). 3) Simple forecasting head with explicit per-sample normalization/de-normalization in forward (mean/std across time) to mitigate scale/non-stationarity without extra modules.",
+  "Key Technical Details": {
+    "Input Embedding": "DataEmbedding: TokenEmbedding implemented as Conv1d (kernel_size=3, circular padding) mapping enc_in -> d_model, plus TemporalEmbedding (fixed or learned embeddings for month/day/weekday/hour/(minute)) or TimeFeatureEmbedding (Linear) depending on embed_type, plus sinusoidal PositionalEmbedding; then dropout.",
+    "Feature Extraction": "Stack of ResidualBlock(s) containing RMSNorm + MambaBlock. MambaBlock: Linear in_proj to 2*d_inner split into (x,res); depthwise Conv1d over time on x (groups=d_inner, kernel=d_conv, padding=d_conv-1) then SiLU; SSM where x_proj produces (delta,B,C), dt_proj maps low-rank delta to d_inner then softplus; selective_scan recurrence updates state x_t = exp(delta*A)*x_{t-1} + (delta*B*u) and outputs y_t = x_t @ C_t plus skip u*D; gating y by SiLU(res) and out_proj back to d_model.",
+    "Positional Encoding": "Absolute sinusoidal positional encoding via PositionalEmbedding (sin/cos, registered buffer).",
+    "Non-stationarity Handling": "Explicit per-sample normalization in Model.forecast: subtract mean over time and divide by std over time (with epsilon), then de-normalize outputs (x_out * std + mean). Not RevIN; no learnable affine parameters."
+  },
+  "Evidence": {
+    "Direct Observations": [
+      {
+        "claim": "Task is forecasting only (short_term_forecast / long_term_forecast) and returns last pred_len steps",
+        "evidence": "models/MambaSimple.py: Model.forward checks `if self.task_name in ['short_term_forecast', 'long_term_forecast']` then returns `x_out[:, -self.pred_len:, :]`."
+      },
+      {
+        "claim": "Encoder-only architecture (no decoder / cross-attention); produces sequence-length outputs then slices horizon",
+        "evidence": "models/MambaSimple.py: Only `forecast()` is used; no decoder module; `x_out = self.out_layer(x)` over full length, then slicing."
+      },
+      {
+        "claim": "Per-sample mean/std normalization over time with de-normalization after prediction",
+        "evidence": "models/MambaSimple.py: `mean_enc = x_enc.mean(1, keepdim=True)`; `std_enc = sqrt(var(...)+1e-5)`; normalize `x_enc`; later `x_out = x_out * std_enc + mean_enc`."
+      },
+      {
+        "claim": "Embedding includes Conv1d token/value embedding + temporal embedding + sinusoidal absolute positional embedding + dropout",
+        "evidence": "layers/Embed.py: DataEmbedding uses `TokenEmbedding` (Conv1d kernel_size=3, circular padding), `TemporalEmbedding`/`TimeFeatureEmbedding`, and `PositionalEmbedding`, summed then dropout. models/MambaSimple.py uses `self.embedding = DataEmbedding(...)` and calls `self.embedding(x_enc, x_mark_enc)`."
+      },
+      {
+        "claim": "Backbone is a stack of residual Mamba blocks with RMSNorm",
+        "evidence": "models/MambaSimple.py: `self.layers = nn.ModuleList([ResidualBlock(...) for _ in range(configs.e_layers)])`; ResidualBlock.forward: `self.mixer(self.norm(x)) + x`; Model has `self.norm = RMSNorm(d_model)`."
+      },
+      {
+        "claim": "MambaBlock uses in-projection split into content and gating residual, depthwise Conv1d, SiLU, then selective state space scan with input-dependent parameters",
+        "evidence": "models/MambaSimple.py: `in_proj` outputs `2*d_inner` then split `(x,res)`; `conv1d` has `groups=self.d_inner`; `x = F.silu(x)`; `x_proj` outputs `dt_rank + 2*d_ff` split into `(delta,B,C)`; `delta = softplus(dt_proj(delta))`; `selective_scan` loop over `l` updates state and computes outputs; `y = y * F.silu(res)`."
+      },
+      {
+        "claim": "Uses sinusoidal positional encoding (fixed buffer) rather than learnable position embeddings",
+        "evidence": "layers/Embed.py: PositionalEmbedding precomputes sin/cos `pe` and `register_buffer('pe', pe)`; forward slices `self.pe[:, :x.size(1)]`."
+      },
+      {
+        "claim": "No attention mechanism is implemented (no Q/K/V, no softmax attention)",
+        "evidence": "Provided files contain no attention modules; core sequence modeling is via `ssm()` and `selective_scan()` recurrence in models/MambaSimple.py."
+      }
+    ],
+    "Unknown / Not in Code": [
+      "Any explicit missing-value imputation logic, masking in the backbone, or probabilistic forecasting head is not present in the provided code.",
+      "Any paper-specific optimizations for parallel scan / fused kernels are not present; the scan is implemented with a Python for-loop."
+    ]
+  },
+  "Inferred Suitability": {
+    "Strengths": [
+      {
+        "label": "Long-range dependency modeling without quadratic attention",
+        "why": "Sequence mixing is primarily via an SSM recurrence (selective_scan) rather than explicit attention matrices, which avoids O(L^2) attention memory/compute in principle",
+        "conditions": "When sequence length L is large and attention-based baselines become memory-bound (e.g., L >= 1k) and an optimized scan implementation is available",
+        "confidence": "medium"
+      },
+      {
+        "label": "Good inductive bias for time series with local patterns + longer trends",
+        "why": "Depthwise Conv1d provides local temporal smoothing/mixing; SSM state provides longer-term integration; temporal embeddings add calendar structure",
+        "conditions": "Seasonal/time-of-day effects exist (x_mark_enc provided) and signals have both short-term and long-term components",
+        "confidence": "high"
+      },
+      {
+        "label": "Stable training via normalization + residual + RMSNorm",
+        "why": "Per-sample normalization reduces scale variability; RMSNorm and residual connections improve optimization stability in deep stacks",
+        "conditions": "Non-stationary scale/offset across samples or datasets; deeper e_layers settings",
+        "confidence": "high"
+      }
+    ],
+    "Weaknesses": [
+      {
+        "label": "Runtime not truly linear-time due to Python sequential scan",
+        "why": "selective_scan uses an explicit Python `for i in range(l)` loop, which is slow on GPU and limits throughput",
+        "conditions": "When L is large and training/inference is GPU-bound; absence of fused/parallel scan kernels",
+        "confidence": "high"
+      },
+      {
+        "label": "Limited decoder-style flexibility for seq2seq conditioning",
+        "why": "Model is encoder-only and ignores x_dec/x_mark_dec in forward; cannot naturally support autoregressive decoding with teacher forcing or complex decoder conditioning",
+        "conditions": "Tasks requiring separate decoder inputs (e.g., classic Informer-style encoder-decoder forecasting, conditional generation, or multi-source conditioning)",
+        "confidence": "high"
+      },
+      {
+        "label": "Normalization may be insufficient for complex distribution shifts",
+        "why": "Only mean/std normalization is used (no learnable affine, no feature-wise reversible instance norm module); may under-handle varying channel-wise shifts or covariate shift",
+        "conditions": "Datasets with strong channel-dependent non-stationarity or need for learnable re-scaling (e.g., per-variable normalization differences)",
+        "confidence": "medium"
+      }
+    ]
+  },
+  "Resource Requirements & Complexity": "Parameter scale: dominated by per-layer linear projections (in_proj: d_model -> 2*d_inner, out_proj: d_inner -> d_model, x_proj: d_inner -> (dt_rank+2*d_ff), dt_proj: dt_rank -> d_inner) plus depthwise conv (d_inner * d_conv). With e_layers blocks, parameters scale ~O(e_layers * d_model * d_inner) where d_inner = d_model * expand. Compute: the selective_scan recurrence performs per-timestep state updates of size (d_inner * d_ff) (state is [B, d_inner, d_ff]) and includes einsum operations; asymptotically O(B * L * d_inner * d_ff) and implemented sequentially across L, which can be a practical bottleneck. Memory: stores intermediate activations per layer and outputs [B,L,d_model]; no O(L^2) attention matrices.",
+  "Paper Link": "https://arxiv.org/abs/2312.00752",
+  "_source_files": [
+    "models/MambaSimple.py",
+    "layers/Embed.py"
+  ]
+}

@@ -1,0 +1,111 @@
+{
+  "model_name": "TimeXer",
+  "Primary Task Type": "Time series forecasting (long-term / short-term)",
+  "Model Architecture Category": "Transformer-based (encoder-only) with patch/segment embedding and cross-attention to exogenous/context tokens",
+  "Core Mechanism & Structure": "An encoder-only Transformer that patchifies the target series per variable, embeds each patch via a linear projection plus sinusoidal positional encoding, appends a learnable global token per variable, and then processes the resulting token sequence through stacked Transformer encoder layers. Each encoder layer performs (1) full self-attention over the patch+global tokens, (2) a cross-attention update applied only to the global token using an external embedding stream derived from all input variables (and optional time features), followed by (3) a point-wise Conv1d feed-forward network with residual connections and LayerNorm. The final representation is reshaped back to [B, variables, d_model, num_patches+1] and a flattened linear head maps it directly to the forecast horizon.",
+  "Core Innovations": "Patch-based tokenization of time series with an explicit per-variable learnable global token, combined with a global-token-only cross-attention pathway to fuse exogenous/multivariate context while keeping patch tokens locally self-attended; plus a lightweight encoder-only, direct-projection forecasting head (no autoregressive decoder) and optional Non-stationary Transformer-style per-sample normalization/de-normalization.",
+  "Key Technical Details": {
+    "Input Embedding": "Two-stream embedding: (A) EnEmbedding patchifies inputs with torch.unfold (non-overlapping patches of length patch_len) and projects each patch with nn.Linear(patch_len -> d_model), adds sinusoidal PositionalEmbedding, and appends a learnable global token per variable; (B) DataEmbedding_inverted creates an external/context embedding by permuting to [B, variate, time] and applying nn.Linear(seq_len -> d_model), optionally concatenating x_mark time features along the variate/channel dimension before projection.",
+    "Feature Extraction": "Stacked EncoderLayer blocks using FullAttention wrapped by AttentionLayer (multi-head dot-product attention). Each block applies self-attention over patch tokens + global token, then cross-attention where only the global token queries the external/context tokens, followed by a Conv1d-based FFN (1x1 convolutions) with GELU/ReLU and residual LayerNorm structure.",
+    "Positional Encoding": "Absolute fixed sinusoidal positional encoding via layers/Embed.py::PositionalEmbedding, applied to patch tokens in EnEmbedding (value_embedding(x) + position_embedding(x)). The external embedding stream (DataEmbedding_inverted) has no positional encoding in this code.",
+    "Non-stationarity Handling": "Optional per-sample normalization and de-normalization in Model.forecast / Model.forecast_multi: subtract mean over time and divide by std over time (then invert on outputs). This is enabled by configs.use_norm."
+  },
+  "Evidence": {
+    "Direct Observations": [
+      {
+        "claim": "Encoder-only Transformer for forecasting (no decoder module; direct head projection to pred_len)",
+        "evidence": "models/TimeXer.py::Model defines self.encoder = Encoder([...]) and self.head = FlattenHead(...), and forward() only routes to forecast()/forecast_multi() which call encoder then head; no decoder class is instantiated."
+      },
+      {
+        "claim": "Patch-based embedding with non-overlapping patches and linear projection to d_model",
+        "evidence": "models/TimeXer.py::EnEmbedding.forward uses x.unfold(dimension=-1, size=self.patch_len, step=self.patch_len) then self.value_embedding = nn.Linear(patch_len, d_model, bias=False)."
+      },
+      {
+        "claim": "Learnable per-variable global token appended to patch token sequence",
+        "evidence": "models/TimeXer.py::EnEmbedding defines self.glb_token = nn.Parameter(torch.randn(1, n_vars, 1, d_model)) and forward() concatenates torch.cat([x, glb], dim=2)."
+      },
+      {
+        "claim": "Sinusoidal absolute positional encoding is applied to patch tokens",
+        "evidence": "layers/Embed.py::PositionalEmbedding constructs sin/cos buffer pe; models/TimeXer.py::EnEmbedding.forward does self.value_embedding(x) + self.position_embedding(x)."
+      },
+      {
+        "claim": "Self-attention and cross-attention both use FullAttention (quadratic attention)",
+        "evidence": "models/TimeXer.py::Model builds EncoderLayer with AttentionLayer(FullAttention(...), d_model, n_heads) for both self_attention and cross_attention."
+      },
+      {
+        "claim": "Cross-attention updates only the global token using the external/context embedding stream",
+        "evidence": "models/TimeXer.py::EncoderLayer.forward extracts x_glb_ori = x[:, -1, :].unsqueeze(1), runs cross_attention(x_glb, cross, cross, ...), then concatenates back with patch tokens via torch.cat([x[:, :-1, :], x_glb], dim=1)."
+      },
+      {
+        "claim": "External/context stream uses DataEmbedding_inverted (linear projection from seq_len to d_model, optional concat with time marks)",
+        "evidence": "models/TimeXer.py::Model sets self.ex_embedding = DataEmbedding_inverted(configs.seq_len, configs.d_model, ...); layers/Embed.py::DataEmbedding_inverted uses self.value_embedding = nn.Linear(c_in, d_model) and forward() optionally concatenates x_mark."
+      },
+      {
+        "claim": "Conv1d feed-forward network (1x1 convolutions) is used in each encoder layer",
+        "evidence": "models/TimeXer.py::EncoderLayer defines conv1 = nn.Conv1d(d_model, d_ff, kernel_size=1) and conv2 = nn.Conv1d(d_ff, d_model, kernel_size=1), applied to y.transpose(-1,1)."
+      },
+      {
+        "claim": "Optional Non-stationary Transformer-style normalization/de-normalization is implemented",
+        "evidence": "models/TimeXer.py::Model.forecast and forecast_multi compute means = x_enc.mean(1, keepdim=True), stdev = sqrt(var(...)+1e-5), normalize x_enc, and later rescale dec_out by stdev and add means when self.use_norm is True."
+      },
+      {
+        "claim": "Supports long_term_forecast and short_term_forecast task modes; other tasks return None",
+        "evidence": "models/TimeXer.py::Model.forward checks self.task_name in {'long_term_forecast','short_term_forecast'} else returns None."
+      }
+    ],
+    "Unknown / Not in Code": [
+      "No explicit loss function, training loop, or evaluation metrics are defined in the provided files.",
+      "Although layers/SelfAttention_Family.py defines DSAttention, ProbAttention, ReformerLayer, TwoStageAttentionLayer, FourierBlock, FourierCrossAttention, AutoCorrelation, none of these are instantiated by models/TimeXer.py (TimeXer uses FullAttention only).",
+      "No explicit handling of missing values/imputation masks beyond attention masks (which are not passed in TimeXer calls)."
+    ]
+  },
+  "Inferred Suitability": {
+    "Strengths": [
+      {
+        "label": "Efficient horizon prediction (non-autoregressive)",
+        "why": "Uses an encoder-only stack and a single linear head (FlattenHead) to map representations directly to pred_len, avoiding step-by-step decoding.",
+        "conditions": "When you want fast inference for fixed-horizon forecasting and do not require autoregressive generation",
+        "confidence": "high"
+      },
+      {
+        "label": "Captures both local patch patterns and global context",
+        "why": "Self-attention operates over patch tokens while a dedicated global token aggregates information and is further enriched via cross-attention to an external embedding stream.",
+        "conditions": "When patch_len is tuned to meaningful temporal granularity and exogenous/multivariate context is informative",
+        "confidence": "medium"
+      },
+      {
+        "label": "Robustness to scale/shift changes",
+        "why": "Optional per-sample normalization/de-normalization can reduce non-stationarity effects (mean/variance drift).",
+        "conditions": "When series exhibit distribution shift over the input window (varying mean/variance)",
+        "confidence": "medium"
+      }
+    ],
+    "Weaknesses": [
+      {
+        "label": "Quadratic attention cost on token length",
+        "why": "FullAttention computes dense attention scores via einsum over all token pairs (O(T^2)), where T = patch_num + 1 (times variables due to flattening B*n_vars).",
+        "conditions": "When seq_len is large and patch_len is small (large patch_num), or when n_vars is large causing B*n_vars to be large",
+        "confidence": "high"
+      },
+      {
+        "label": "Potential information loss from non-overlapping patching",
+        "why": "Patches are created with step=patch_len (no overlap), so fine-grained patterns across patch boundaries may be harder to represent.",
+        "conditions": "When important dynamics occur at scales smaller than patch_len or are sensitive to boundary effects",
+        "confidence": "medium"
+      },
+      {
+        "label": "Limited use of time/exogenous marks in the patch stream",
+        "why": "Temporal marks (x_mark_enc) are only incorporated into the external embedding (DataEmbedding_inverted) and not directly aligned with patch tokens; cross-attention only updates the global token, not each patch token.",
+        "conditions": "When accurate alignment of calendar/time features to each patch/time position is critical",
+        "confidence": "medium"
+      }
+    ]
+  },
+  "Resource Requirements & Complexity": "Let P = seq_len / patch_len, token length per variable is (P+1). The model flattens variables into the batch for attention: effective batch is B*n_vars. Each encoder layer uses FullAttention with time complexity O((B*n_vars) * (P+1)^2 * d_model) and memory O((B*n_vars) * n_heads * (P+1)^2). The FFN uses 1x1 Conv1d with O((B*n_vars) * (P+1) * d_model * d_ff). Parameter count is typical Transformer encoder scale: per layer ~ (QKV+out) projections O(d_model^2) plus FFN O(d_model*d_ff), plus small overhead from global tokens and the final FlattenHead linear mapping from d_model*(P+1) to pred_len.",
+  "Paper Link": "None",
+  "_source_files": [
+    "models/TimeXer.py",
+    "layers/SelfAttention_Family.py",
+    "layers/Embed.py"
+  ]
+}

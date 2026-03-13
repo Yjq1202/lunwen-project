@@ -1,0 +1,107 @@
+{
+  "model_name": "ETSformer",
+  "Primary Task Type": "Time-series forecasting (long/short-term), with shared backbone also supporting imputation, anomaly detection, and classification",
+  "Model Architecture Category": "ETS/Decomposition-based model with Fourier components and exponential smoothing (not Transformer attention-based)",
+  "Core Mechanism & Structure": "ETSformer implements an encoder–decoder that explicitly decomposes representations into (1) level (trend baseline), (2) growth (trend change) and (3) seasonality. Inputs are embedded via a Conv1d token embedding plus (optional) temporal features and fixed sinusoidal positional encoding. Each EncoderLayer extracts a seasonal component using an FFT-based FourierLayer (top-k frequency selection and time-domain extrapolation over context+prediction horizon), removes it from the residual stream, then extracts a growth component using a multi-head ExponentialSmoothing operator over first differences (GrowthLayer). A LevelLayer updates the level using exponential smoothing with an auxiliary growth term. Residuals are stabilized by LayerNorm and a position-wise Feedforward MLP. The Decoder applies a learned per-head damping (DampingLayer) to the last growth state to generate growth over the forecast horizon, slices the seasonal horizon from the extrapolated seasonal signal, projects both to output channels, and sums level(last) + growth + season to form predictions. A lightweight augmentation Transform (scale/shift/jitter) is applied only during training in forecasting mode (under no_grad).",
+  "Core Innovations": "Explicit decomposition into level/growth/season pathways using signal-processing operators (FFT top-k seasonal extrapolation + exponential smoothing for growth/level) rather than dot-product attention; O(L log L) seasonal extraction and O(L log L) smoothing via FFT-based convolution; decoder uses learnable damping to control extrapolated trend magnitude over the horizon.",
+  "Key Technical Details": {
+    "Input Embedding": "DataEmbedding: TokenEmbedding via circular Conv1d(kernel_size=3) from c_in->d_model, plus fixed sinusoidal PositionalEmbedding, plus TemporalEmbedding (fixed or learned categorical embeddings for month/day/weekday/hour/(minute)) or TimeFeatureEmbedding (linear projection) depending on embed_type; dropout applied.",
+    "Feature Extraction": "Seasonality: FourierLayer using rFFT over time, selects top-k frequencies by magnitude, then extrapolates sinusoidal components to length (seq_len + pred_len). Growth: GrowthLayer computes first differences of projected multi-head features and applies ExponentialSmoothing implemented via FFT-based 1D convolution (conv1d_fft). Level: LevelLayer performs exponential smoothing over (level - season) with auxiliary contribution from growth.",
+    "Positional Encoding": "Absolute fixed sinusoidal positional encoding (PositionalEmbedding) added to embeddings.",
+    "Non-stationarity Handling": "No explicit RevIN or normalization of raw inputs; stability handled by decomposition (level/growth/season separation), LayerNorm on residual stream, and optional training-time data augmentation Transform (scale/shift/jitter) in forecasting."
+  },
+  "Evidence": {
+    "Direct Observations": [
+      {
+        "claim": "Model supports multiple tasks (forecasting, imputation, anomaly detection, classification) using the same backbone",
+        "evidence": "models/ETSformer.py: Model.forward branches on task_name; defines forecast(), imputation(), anomaly_detection(), classification()"
+      },
+      {
+        "claim": "Uses an explicit decomposition into level, growth, and season and recombines them additively for predictions",
+        "evidence": "models/ETSformer.py: level, growths, seasons = self.encoder(...); growth, season = self.decoder(growths, seasons); preds = level[:, -1:] + growth + season"
+      },
+      {
+        "claim": "Embedding is Conv1d token embedding + temporal embedding + fixed sinusoidal positional encoding",
+        "evidence": "layers/Embed.py: TokenEmbedding uses nn.Conv1d(... padding_mode='circular'); DataEmbedding adds value_embedding + temporal_embedding(x_mark) + position_embedding"
+      },
+      {
+        "claim": "Seasonality is extracted using FFT with top-k frequency selection and extrapolation over pred_len",
+        "evidence": "layers/ETSformer_EncDec.py: class FourierLayer forward() uses fft.rfft, topk_freq(), extrapolate() to t + pred_len"
+      },
+      {
+        "claim": "Growth is modeled via exponential smoothing over first differences in a multi-head manner",
+        "evidence": "layers/ETSformer_EncDec.py: GrowthLayer forward(): values = in_proj(...)->(b,t,h,d); prepend z0; values[:,1:]-values[:,:-1]; out = self.es(values)"
+      },
+      {
+        "claim": "Exponential smoothing is implemented as FFT-based convolution",
+        "evidence": "layers/ETSformer_EncDec.py: ExponentialSmoothing forward() calls conv1d_fft(...); conv1d_fft uses torch.fft.rfft/irfft"
+      },
+      {
+        "claim": "Decoder applies a learnable damping factor to extrapolate growth into the forecast horizon",
+        "evidence": "layers/ETSformer_EncDec.py: DampingLayer with nn.Parameter(_damping_factor) and powers; DecoderLayer uses growth_damping(growth[:, -1:])"
+      },
+      {
+        "claim": "There is a training-time augmentation transform (scale/shift/jitter) applied for forecasting under no_grad",
+        "evidence": "models/ETSformer.py: self.transform = Transform(sigma=0.2); forecast(): with torch.no_grad(): if self.training: x_enc = self.transform.transform(x_enc)"
+      },
+      {
+        "claim": "Classification head flattens (seq_len*d_model) and projects to num_class, masking padding via x_mark_enc",
+        "evidence": "models/ETSformer.py: projection = nn.Linear(d_model*seq_len,num_class); output = output * x_mark_enc.unsqueeze(-1); reshape then projection"
+      }
+    ],
+    "Unknown / Not in Code": [
+      "Any dot-product attention / self-attention module (no MultiheadAttention, no QKV projections typical of Transformers)",
+      "RevIN or other explicit reversible instance normalization layers",
+      "Autoregressive decoding with causal attention (decoder is not attention-based; it damps growth and slices seasonal horizon)"
+    ]
+  },
+  "Inferred Suitability": {
+    "Strengths": [
+      {
+        "label": "Efficient long-context modeling without O(L^2) attention",
+        "why": "Seasonal extraction uses rFFT (≈O(L log L)) and smoothing uses FFT convolution; no attention matrices are formed",
+        "conditions": "When sequence length is large (e.g., L in the thousands) and GPU memory is a constraint",
+        "confidence": "high"
+      },
+      {
+        "label": "Good inductive bias for time series with clear trend + seasonality structure",
+        "why": "Architecture explicitly models level/growth/season with ETS-style smoothing and Fourier seasonal extrapolation",
+        "conditions": "When the data exhibits stable/recurring periodicities and smooth trend dynamics",
+        "confidence": "high"
+      },
+      {
+        "label": "Robustness via decomposition and mild augmentation",
+        "why": "Separating components plus LayerNorm/FFN can stabilize residual learning; training-time scale/shift/jitter can regularize",
+        "conditions": "When training data is limited or mildly noisy and you can tolerate augmentation-driven bias",
+        "confidence": "medium"
+      }
+    ],
+    "Weaknesses": [
+      {
+        "label": "May struggle with non-periodic, abrupt regime changes",
+        "why": "Fourier top-k assumes dominant periodic components; exponential smoothing assumes gradually evolving dynamics",
+        "conditions": "When series has sudden structural breaks, spikes, or highly nonstationary/chaotic patterns",
+        "confidence": "medium"
+      },
+      {
+        "label": "Seasonality modeling depends on correct k/top_k and frequency content",
+        "why": "FourierLayer selects top-k frequencies by magnitude; wrong k can underfit/overfit seasonal components",
+        "conditions": "When seasonal patterns are weak, time-varying, or multi-scale beyond a small set of global frequencies",
+        "confidence": "medium"
+      },
+      {
+        "label": "Limited cross-variable interaction modeling beyond shared projections",
+        "why": "Core operators act on projected d_model features; no explicit cross-channel attention or graph structure is present",
+        "conditions": "When multivariate dependencies are complex and not captured well by shared linear/conv projections",
+        "confidence": "low"
+      }
+    ]
+  },
+  "Resource Requirements & Complexity": "Parameter count scales mainly with (e_layers+d_layers) * (d_model*d_ff + d_model^2) from FFN and linear projections, plus small per-head smoothing/damping parameters. Compute: FourierLayer uses rFFT/irFFT over time (≈O(B*d_model*L log L)) and Growth/Level smoothing uses FFT-based conv1d (≈O(B*nhead*d_head*L log L)). Memory is dominated by storing intermediate growth/season tensors for each layer and FFT buffers; generally more scalable than full attention for long L.",
+  "Paper Link": "https://arxiv.org/abs/2202.01381",
+  "_source_files": [
+    "models/ETSformer.py",
+    "layers/Embed.py",
+    "layers/ETSformer_EncDec.py"
+  ]
+}

@@ -1,0 +1,116 @@
+{
+  "model_name": "PatchTST",
+  "Primary Task Type": "Multitask Time Series Modeling (Forecasting / Imputation / Anomaly Detection / Classification)",
+  "Model Architecture Category": "Transformer-based (Patch-based encoder-only Transformer with task-specific heads)",
+  "Core Mechanism & Structure": "An encoder-only Transformer operating on patchified univariate streams: the input multivariate series is normalized per-sample/per-variable, permuted to [B, N, L], then split into overlapping temporal patches via unfold (patch_len, stride) with replication padding. Each patch (length=patch_len) is linearly projected to d_model and added with sinusoidal absolute positional embeddings, yielding tokens of shape [(B*N), patch_num, d_model]. Tokens pass through a stack of standard Transformer encoder layers (multi-head full self-attention + position-wise feed-forward implemented as 1x1 Conv1d blocks) and a final normalization using BatchNorm1d over the channel dimension (via transpose wrappers). The model uses no Transformer decoder; instead it applies a per-variable flatten+linear head over all patch tokens to produce either a prediction window (forecasting), a reconstruction over seq_len (imputation/anomaly), or a global flattened projection (classification). Finally, outputs are de-normalized back to the original scale.",
+  "Core Innovations": "Patch-based tokenization of time series (overlapping patches) to shorten the effective sequence length and emphasize local temporal patterns; channel-independent processing by reshaping to (B*N) so the Transformer models each variable’s temporal structure without explicit cross-variable attention; simple non-stationarity mitigation via per-sample mean/variance normalization and de-normalization (akin to Non-stationary Transformer preprocessing) integrated into each task forward.",
+  "Key Technical Details": {
+    "Input Embedding": "PatchEmbedding: ReplicationPad1d + unfold into overlapping patches, Linear(patch_len -> d_model) per patch, plus sinusoidal PositionalEmbedding; applied after permuting input to [B, n_vars, seq_len] and reshaping to [(B*n_vars), patch_num, d_model].",
+    "Feature Extraction": "Stacked Transformer encoder layers: multi-head FullAttention (scaled dot-product) wrapped by AttentionLayer (Q/K/V linear projections + output projection), residual connections, LayerNorm, and FFN implemented using 1x1 Conv1d (d_model->d_ff->d_model) with GELU/ReLU.",
+    "Positional Encoding": "Absolute fixed sinusoidal positional encoding (PositionalEmbedding) added at patch-token level inside PatchEmbedding.",
+    "Non-stationarity Handling": "Explicit per-sample normalization using mean over time and stdev (forecast/anomaly/classification) and a mask-aware mean/stdev for imputation; followed by output de-normalization using the stored mean/stdev."
+  },
+  "Evidence": {
+    "Direct Observations": [
+      {
+        "claim": "Patch-based embedding with overlapping patches and replication padding",
+        "evidence": "layers/Embed.py::PatchEmbedding.forward uses nn.ReplicationPad1d((0,padding)) then x.unfold(dimension=-1, size=self.patch_len, step=self.stride)."
+      },
+      {
+        "claim": "Patch tokens are projected by a linear layer and augmented with fixed sinusoidal positional embeddings",
+        "evidence": "layers/Embed.py::PatchEmbedding has self.value_embedding = nn.Linear(patch_len, d_model, bias=False) and adds self.position_embedding (PositionalEmbedding) in forward: x = self.value_embedding(x) + self.position_embedding(x)."
+      },
+      {
+        "claim": "Encoder-only Transformer backbone (no Transformer decoder used in PatchTST model)",
+        "evidence": "models/PatchTST.py defines self.encoder = Encoder([...]) and never instantiates layers/Transformer_EncDec.Decoder; output is produced by FlattenHead / Linear projection heads."
+      },
+      {
+        "claim": "Self-attention mechanism is FullAttention (dense scaled dot-product attention)",
+        "evidence": "models/PatchTST.py constructs AttentionLayer(FullAttention(False, configs.factor, ...), configs.d_model, configs.n_heads). FullAttention in layers/SelfAttention_Family.py computes scores = einsum and softmax over full [LxS]."
+      },
+      {
+        "claim": "Transformer encoder layer uses LayerNorm + residual + FFN implemented with 1x1 Conv1d",
+        "evidence": "layers/Transformer_EncDec.py::EncoderLayer defines norm1/norm2 LayerNorm and conv1/conv2 as nn.Conv1d(kernel_size=1) with activation, used after attention residual."
+      },
+      {
+        "claim": "Final encoder normalization is BatchNorm1d over d_model with transposes",
+        "evidence": "models/PatchTST.py sets norm_layer=nn.Sequential(Transpose(1,2), nn.BatchNorm1d(configs.d_model), Transpose(1,2)) passed into Encoder."
+      },
+      {
+        "claim": "Channel-independent processing by reshaping batch and variables together",
+        "evidence": "models/PatchTST.py::forecast permutes x_enc to [B, nvars, L], then PatchEmbedding reshapes to (x.shape[0]*x.shape[1], ...); later it reshapes back with torch.reshape(enc_out, (-1, n_vars, ...))."
+      },
+      {
+        "claim": "Per-sample mean/std normalization and de-normalization are applied in forecast/anomaly/classification paths",
+        "evidence": "models/PatchTST.py::forecast computes means=x_enc.mean(1) and stdev=sqrt(var(...)+1e-5), normalizes x_enc, and later rescales and shifts dec_out using stdev/means; similar code exists in anomaly_detection and classification."
+      },
+      {
+        "claim": "Mask-aware normalization for imputation",
+        "evidence": "models/PatchTST.py::imputation computes means = sum(x_enc)/sum(mask==1), zero-fills missing via masked_fill(mask==0,0), and stdev from masked energy / observed count."
+      },
+      {
+        "claim": "Task-specific heads: FlattenHead for forecasting/imputation/anomaly, and a global linear classifier head for classification",
+        "evidence": "models/PatchTST.py: FlattenHead used when task_name in {'long_term_forecast','short_term_forecast','imputation','anomaly_detection'}; classification uses self.flatten + self.projection = nn.Linear(self.head_nf * enc_in, num_class)."
+      },
+      {
+        "claim": "Paper link is explicitly referenced",
+        "evidence": "models/PatchTST.py class Model docstring includes 'Paper link: https://arxiv.org/pdf/2211.14730.pdf'."
+      }
+    ],
+    "Unknown / Not in Code": [
+      "No explicit RevIN module is present or used; normalization is implemented inline with mean/std computations in models/PatchTST.py.",
+      "No cross-variable attention mechanism is explicitly implemented in the PatchTST model path; variables are processed independently after reshaping to (B*n_vars).",
+      "No explicit temporal/categorical covariate embedding (x_mark_enc) is used in PatchTST.forward paths; x_mark_enc/x_mark_dec are accepted but unused in forecast/imputation/anomaly methods."
+    ]
+  },
+  "Inferred Suitability": {
+    "Strengths": [
+      {
+        "label": "Efficient long-context modeling via patching",
+        "why": "PatchEmbedding reduces token length from seq_len to patch_num ≈ (seq_len - patch_len)/stride + 2, lowering Transformer cost while keeping local context inside each token.",
+        "conditions": "When seq_len is large (e.g., 512–10k) and patch_len/stride are chosen to substantially reduce patch_num.",
+        "confidence": "high"
+      },
+      {
+        "label": "Strong univariate temporal pattern extraction per channel",
+        "why": "Reshaping to (B*n_vars) makes the encoder focus on temporal dependencies within each variable without interference from other variables.",
+        "conditions": "When each variable has meaningful autoregressive/seasonal structure and cross-variable interactions are weak or can be handled downstream.",
+        "confidence": "high"
+      },
+      {
+        "label": "Robustness to scale shifts / non-stationarity",
+        "why": "Inline mean-variance normalization and de-normalization stabilizes training and reduces sensitivity to varying magnitudes across samples.",
+        "conditions": "When datasets exhibit sample-wise level/variance changes (trend shifts, heteroskedasticity).",
+        "confidence": "medium"
+      }
+    ],
+    "Weaknesses": [
+      {
+        "label": "Quadratic attention cost in number of patches",
+        "why": "Uses FullAttention, which forms dense attention scores of shape [H, patch_num, patch_num] per (B*n_vars).",
+        "conditions": "When patch_num is still large (small stride, small patch_len, or extremely long seq_len) or when n_vars is large since effective batch is multiplied by n_vars.",
+        "confidence": "high"
+      },
+      {
+        "label": "Limited modeling of cross-variable dependencies",
+        "why": "Variables are encoded independently (B*n_vars) and the prediction head is per-variable; there is no explicit multivariate mixing attention/module in the main path.",
+        "conditions": "When target depends on interactions among variables (e.g., coupled sensors, multivariate causal relations).",
+        "confidence": "high"
+      },
+      {
+        "label": "Temporal covariates likely unused",
+        "why": "x_mark_enc/x_mark_dec are passed through the API but not used in PatchTST forecast/imputation/anomaly/classification computations.",
+        "conditions": "When calendar/time features are important (holidays, hour-of-day effects) and not already inferable from the series values alone.",
+        "confidence": "high"
+      }
+    ]
+  },
+  "Resource Requirements & Complexity": "Let P=patch_num ≈ (seq_len - patch_len)/stride + 2. The encoder processes (B*n_vars) sequences of length P. Compute/memory per layer is dominated by dense attention: O((B*n_vars) * n_heads * P^2) plus FFN O((B*n_vars) * P * d_model * d_ff). The head is a linear map from (d_model*P) to target_window per variable (FlattenHead), which can be parameter-heavy when P is large: params ~ enc_in * pred_len * (d_model*P) (shared across batch). Overall parameter scale is typical of small/medium Transformers plus a potentially sizable final linear head depending on seq_len/stride.",
+  "Paper Link": "https://arxiv.org/pdf/2211.14730.pdf",
+  "_source_files": [
+    "models/PatchTST.py",
+    "layers/Transformer_EncDec.py",
+    "layers/SelfAttention_Family.py",
+    "layers/Embed.py"
+  ]
+}

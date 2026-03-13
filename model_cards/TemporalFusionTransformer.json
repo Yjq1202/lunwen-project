@@ -1,0 +1,102 @@
+{
+  "model_name": "TemporalFusionTransformer",
+  "Primary Task Type": "Time series forecasting (long-term / short-term, multi-horizon)",
+  "Model Architecture Category": "Hybrid RNN + Transformer-style attention with variable selection (Temporal Fusion Transformer-like)",
+  "Core Mechanism & Structure": "A Temporal Fusion Transformer-style multi-horizon forecasting model that (1) embeds each input variable separately, (2) performs static covariate encoding to generate context vectors, (3) applies variable selection networks (VSNs) via gated residual networks (GRNs) to produce a single fused representation for historical inputs (observed+known) and future inputs (known only), (4) encodes history and future via separate LSTMs with optional static-initialized hidden/cell state, (5) enriches temporal features with static context, (6) applies causal interpretable multi-head self-attention over the concatenated history+future timeline and then keeps only the prediction horizon, and (7) projects to output dimensions and de-normalizes using per-sample mean/std computed from the encoder window.",
+  "Core Innovations": "1) TFT-style variable selection using a joint GRN to compute softmax weights over variables and per-variable GRNs to transform variables before weighted aggregation, enabling interpretability over input variables. 2) Static covariate encoder producing multiple distinct static context vectors (c_s, c_c, c_h, c_e) used for variable selection conditioning, LSTM initialization, and feature enrichment. 3) Interpretable attention implementation that shares the value projection across heads (single V) and averages head outputs, combined with a causal mask over (seq_len + pred_len) to prevent leakage.",
+  "Key Technical Details": {
+    "Input Embedding": "Per-variable embedding: each observed/static scalar variable is passed through DataEmbedding(1 -> d_model) (Conv1d token embedding + sinusoidal positional embedding; temporal embedding not used because x_mark=None for these). Known time features are embedded as a stack of per-time-component embeddings (TFTTemporalEmbedding) or as per-feature linear projections (TFTTimeFeatureEmbedding when embed='timeF'), yielding a [B,T,known_len,d_model] tensor.",
+    "Feature Extraction": "VariableSelectionNetwork (joint GRN for weights + per-variable GRN transforms) fuses variables into a single [B,T,d_model] representation for history and future separately; temporal dynamics modeled by LSTMs (history_encoder and future_encoder) followed by gated residual connections (GateAddNorm), static enrichment via GRN(context=c_e), then causal multi-head self-attention (InterpretableMultiHeadAttention) over concatenated timeline, followed by position-wise GRN and final gated residual fusion before linear output projection.",
+    "Positional Encoding": "Sinusoidal absolute positional encoding is present inside DataEmbedding (PositionalEmbedding) for observed/static variable embeddings; known time embeddings are explicit calendar/time-feature embeddings (month/day/weekday/hour/(minute)) stacked as separate known variables rather than added as a single temporal embedding. The attention module itself does not add additional positional encoding.",
+    "Non-stationarity Handling": "Per-sample normalization using mean and standard deviation computed over the encoder time dimension (x_enc.mean over dim=1 and stdev from variance), with corresponding de-normalization of predictions; this is implemented inline (not RevIN) and described in comments as 'Normalization from Non-stationary Transformer'."
+  },
+  "Evidence": {
+    "Direct Observations": [
+      {
+        "claim": "Implements TFT-style static/observed/known separation with variable selection",
+        "evidence": "models/TemporalFusionTransformer.py defines datatype_dict, TFTEmbedding producing static_input/observed_input/known_input; Model.__init__ builds StaticCovariateEncoder, history_vsn=VariableSelectionNetwork(d_model, observed_len+known_len), future_vsn=VariableSelectionNetwork(d_model, known_len)."
+      },
+      {
+        "claim": "Uses GRN + gating residual add&norm blocks",
+        "evidence": "models/TemporalFusionTransformer.py defines GRN, GLU, GateAddNorm; GRN.forward uses ELU, dropout, and GateAddNorm(skip)."
+      },
+      {
+        "claim": "Temporal modeling uses separate LSTMs for history and future, with optional static initialization",
+        "evidence": "TemporalFusionDecoder has history_encoder=nn.LSTM and future_encoder=nn.LSTM; forward() sets c=(c_c.unsqueeze(0), c_h.unsqueeze(0)) if provided, passes to history_encoder, then feeds history state into future_encoder."
+      },
+      {
+        "claim": "Applies causal self-attention over concatenated (history+future) timeline, then computes output only for pred_len",
+        "evidence": "InterpretableMultiHeadAttention registers an upper-triangular mask of shape (seq_len+pred_len, seq_len+pred_len); TemporalFusionDecoder concatenates history and future features, runs self.attention(enriched_features) and then slices attention_out[:,-pred_len:]."
+      },
+      {
+        "claim": "Non-stationarity handling via per-sample mean/std normalization and de-normalization",
+        "evidence": "Model.forecast: computes means=x_enc.mean(1, keepdim=True), stdev=sqrt(var+1e-5), normalizes x_enc, and later rescales/offsets dec_out by stdev/means repeated over pred_len."
+      },
+      {
+        "claim": "Observed/static variables use convolutional token embedding with sinusoidal positional embedding",
+        "evidence": "layers/Embed.py: DataEmbedding uses TokenEmbedding(Conv1d kernel_size=3 padding_mode='circular') plus PositionalEmbedding(sin/cos); TFTEmbedding builds ModuleList([DataEmbedding(1,d_model,...)]) for each observed/static variable and calls embed(x, None) (x_mark is None so DataEmbedding adds only value_embedding + position_embedding)."
+      },
+      {
+        "claim": "Known time features are embedded as separate components stacked along a 'variable' axis",
+        "evidence": "TFTTemporalEmbedding.forward stacks [month_x, day_x, weekday_x, hour_x, minute_x] along dim=-2; TFTTimeFeatureEmbedding stacks Linear(1->d_model) outputs per known feature along dim=-2."
+      },
+      {
+        "claim": "Implements an 'interpretable' attention variant with shared value projection and head-averaging",
+        "evidence": "InterpretableMultiHeadAttention.qkv_linears outputs (2*n_heads+1)*d_head; split into q (n_heads*d_head), k (n_heads*d_head), v (d_head) (single v), attention_out computed per head then torch.mean over heads; out_projection maps d_head->d_model."
+      }
+    ],
+    "Unknown / Not in Code": [
+      "Probabilistic forecasting heads/quantile loss (no distributional output; only linear projection to configs.c_out).",
+      "Explicit series decomposition (trend/seasonal) blocks.",
+      "RevIN module/class usage (normalization is implemented manually in Model.forecast)."
+    ]
+  },
+  "Inferred Suitability": {
+    "Strengths": [
+      {
+        "label": "Multi-horizon forecasting with known future covariates",
+        "why": "Architecture explicitly separates observed (past-only) and known (past+future) inputs and feeds known future through a dedicated future_vsn and future LSTM; attention is applied over combined history+future timeline but outputs only the forecast horizon.",
+        "conditions": "When calendar features or exogenous signals are available for the forecast window (x_mark_dec or other known covariates).",
+        "confidence": "high"
+      },
+      {
+        "label": "Interpretability over variable importance",
+        "why": "VariableSelectionNetwork computes softmax selection weights over variables via joint GRN and uses per-variable GRNs before weighted aggregation; attention is also averaged across heads with a shared value representation.",
+        "conditions": "When inputs are structured into distinct variables (static/observed/known) and users want per-variable contribution signals.",
+        "confidence": "high"
+      },
+      {
+        "label": "Robustness to scale shifts / non-stationarity",
+        "why": "Per-sample normalization and de-normalization based on encoder-window mean and std reduces sensitivity to changing levels/variance.",
+        "conditions": "When series exhibit changing scale across samples/windows (dataset-level normalization is insufficient).",
+        "confidence": "medium"
+      }
+    ],
+    "Weaknesses": [
+      {
+        "label": "Attention cost scales quadratically with total length",
+        "why": "InterpretableMultiHeadAttention forms an attention score tensor of shape [B, n_heads, T, T] with T=seq_len+pred_len.",
+        "conditions": "When seq_len+pred_len is large (e.g., >1024) or batch size is large.",
+        "confidence": "high"
+      },
+      {
+        "label": "Limited support for non-forecasting tasks",
+        "why": "Model.forward only handles task_name in {'long_term_forecast','short_term_forecast'} and returns None otherwise.",
+        "conditions": "When attempting imputation/anomaly detection/classification within the same framework.",
+        "confidence": "high"
+      },
+      {
+        "label": "Static covariates may be ineffective on datasets with no static features configured",
+        "why": "datatype_dict maps ETTh1/ETTm1 static to empty list, so StaticCovariateEncoder returns [None]*4 and context conditioning/initialization are disabled.",
+        "conditions": "When dataset configuration lacks static feature indices and no static inputs are provided.",
+        "confidence": "high"
+      }
+    ]
+  },
+  "Resource Requirements & Complexity": "Compute is dominated by (a) LSTMs over seq_len and pred_len: O(B*(seq_len+pred_len)*d_model^2) for recurrent projections, and (b) causal self-attention over T=seq_len+pred_len: O(B*n_heads*T^2*d_head) time and O(B*n_heads*T^2) memory for attention scores. Parameter count is moderate: per-variable DataEmbedding includes a Conv1d(1->d_model) per variable plus GRNs (multiple Linear layers) and two LSTMs with hidden size d_model; attention uses a single linear for QKV and a small output projection (d_head->d_model).",
+  "Paper Link": "None",
+  "_source_files": [
+    "models/TemporalFusionTransformer.py",
+    "layers/Embed.py"
+  ]
+}

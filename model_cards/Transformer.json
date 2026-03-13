@@ -1,0 +1,88 @@
+{
+  "model_name": "Transformer",
+  "Primary Task Type": "Multitask time-series modeling (Forecasting / Imputation / Anomaly Detection / Classification)",
+  "Model Architecture Category": "Transformer-based (vanilla encoder-decoder Transformer with full self-attention)",
+  "Core Mechanism & Structure": "A vanilla Transformer for time-series with (1) convolutional token/value embedding (Conv1d over time) plus sinusoidal absolute positional encoding and optional calendar/time-feature embedding, (2) a stack of standard Transformer encoder layers using multi-head full dot-product self-attention followed by position-wise feed-forward implemented via 1x1 Conv1d, residual connections, dropout, and LayerNorm, and (3) for forecasting tasks, a standard Transformer decoder with causal masked self-attention + encoder-decoder cross-attention + FFN, ending in a linear projection to output channels. For non-forecast tasks, the model reuses only the encoder and applies a linear head (or a flattened classifier head) on top of encoder outputs.",
+  "Core Innovations": "Primarily a baseline/vanilla Transformer implementation for time series with a time-series-specific embedding stack (Conv token embedding + temporal features + sinusoidal position). The codebase also contains alternative attention mechanisms (ProbAttention/DSAttention/AutoCorrelation/Fourier-based blocks/Reformer/TwoStageAttention), but this particular `models/Transformer.py` instantiates only FullAttention.",
+  "Key Technical Details": {
+    "Input Embedding": "DataEmbedding: TokenEmbedding via circular-padded Conv1d(c_in→d_model, kernel=3) + TemporalEmbedding (fixed/learned calendar embeddings OR linear time-feature embedding when embed_type='timeF') + fixed sinusoidal PositionalEmbedding; dropout applied after summation.",
+    "Feature Extraction": "Encoder/Decoder layers use AttentionLayer wrapping FullAttention (multi-head scaled dot-product attention), followed by FFN implemented as Conv1d(d_model→d_ff→d_model) with activation (ReLU/GELU), residual connections, LayerNorm, and dropout. Decoder includes both causal self-attention and cross-attention to encoder outputs for forecasting.",
+    "Positional Encoding": "Fixed absolute sinusoidal positional encoding (PositionalEmbedding) added to token embeddings (and temporal embeddings if provided).",
+    "Non-stationarity Handling": "No explicit non-stationarity module (e.g., RevIN or decomposition) is used in `models/Transformer.py`; only standard LayerNorm and optional time/calendar covariates."
+  },
+  "Evidence": {
+    "Direct Observations": [
+      {
+        "claim": "Implements a vanilla encoder-decoder Transformer with full attention (O(L^2)).",
+        "evidence": "models/Transformer.py docstring: 'Vanilla Transformer with O(L^2) complexity'; encoder uses AttentionLayer(FullAttention(...)) in Model.__init__; decoder uses FullAttention with mask_flag True for self-attn and False for cross-attn."
+      },
+      {
+        "claim": "Uses DataEmbedding consisting of Conv1d token embedding + sinusoidal positional embedding + optional temporal/time-feature embedding.",
+        "evidence": "layers/Embed.py: DataEmbedding.forward sums TokenEmbedding + PositionalEmbedding (+ TemporalEmbedding or TimeFeatureEmbedding depending on embed_type); TokenEmbedding is nn.Conv1d(..., kernel_size=3, padding_mode='circular')."
+      },
+      {
+        "claim": "Encoder layer FFN is implemented via 1x1 Conv1d projections with activation and residual+LayerNorm.",
+        "evidence": "layers/Transformer_EncDec.py: EncoderLayer has conv1=Conv1d(d_model→d_ff, k=1), conv2=Conv1d(d_ff→d_model, k=1), activation=relu/gelu, norm1/norm2, residual additions."
+      },
+      {
+        "claim": "Forecasting path uses a Transformer decoder with causal masked self-attention and encoder-decoder cross-attention, then a linear projection to c_out.",
+        "evidence": "models/Transformer.py: if task_name in {'long_term_forecast','short_term_forecast'} creates Decoder with DecoderLayer(self_attention=FullAttention(True,...), cross_attention=FullAttention(False,...)) and projection=nn.Linear(d_model,c_out); forward returns dec_out[:, -pred_len:, :]. TriangularCausalMask is applied inside FullAttention when mask_flag=True (layers/SelfAttention_Family.py)."
+      },
+      {
+        "claim": "Supports multiple tasks via different heads: imputation/anomaly_detection use encoder + linear projection; classification flattens encoder outputs and uses a linear classifier.",
+        "evidence": "models/Transformer.py: imputation() returns projection(enc_out); anomaly_detection() returns projection(enc_out); classification() applies gelu+dropout, multiplies by x_mark_enc.unsqueeze(-1) as padding mask, reshapes to [B, seq_len*d_model], then projection to num_class."
+      },
+      {
+        "claim": "FullAttention computes dense attention scores via einsum and softmax with optional causal masking.",
+        "evidence": "layers/SelfAttention_Family.py: FullAttention.forward uses scores = torch.einsum('blhe,bshe->bhls',...), applies TriangularCausalMask when mask_flag and attn_mask is None, then softmax(scale*scores)."
+      }
+    ],
+    "Unknown / Not in Code": [
+      "No RevIN/series decomposition/explicit normalization beyond LayerNorm is present in the provided files, and none is invoked from models/Transformer.py."
+    ]
+  },
+  "Inferred Suitability": {
+    "Strengths": [
+      {
+        "label": "General-purpose sequence-to-sequence forecasting with covariates",
+        "why": "Encoder-decoder Transformer with cross-attention and explicit temporal/covariate embedding (x_mark) fits standard multivariate time-series forecasting setups with known future time features.",
+        "conditions": "When future time covariates (x_mark_dec) are available and seq_len is moderate (e.g., a few hundred).",
+        "confidence": "high"
+      },
+      {
+        "label": "Flexible multitask reuse of encoder representations",
+        "why": "Same encoder is reused for imputation, anomaly detection (reconstruction-style), and classification heads, enabling shared modeling of temporal dependencies.",
+        "conditions": "When tasks can be framed as per-timestep regression (imputation/anomaly) or sequence classification over fixed-length windows.",
+        "confidence": "high"
+      }
+    ],
+    "Weaknesses": [
+      {
+        "label": "Poor scalability to very long sequences",
+        "why": "FullAttention forms an O(L^2) attention matrix (bhls) and will be memory/time heavy.",
+        "conditions": "When sequence length L becomes large (commonly > 1000) or batch size is large.",
+        "confidence": "high"
+      },
+      {
+        "label": "Limited explicit handling of non-stationarity and trend/seasonality",
+        "why": "No decomposition (trend/seasonal), RevIN, or explicit stationarization is used; relies on attention + LayerNorm + time features.",
+        "conditions": "When time series exhibits strong distribution shift, changing mean/variance, or complex multi-seasonality not captured by provided time features.",
+        "confidence": "medium"
+      },
+      {
+        "label": "Imputation/anomaly heads are shallow (no decoder, no masking logic used)",
+        "why": "Imputation signature includes `mask` but it is unused; output is direct linear projection of encoder states, not a dedicated masked modeling objective in the architecture.",
+        "conditions": "When missingness is high/structured and benefits from explicit mask-aware modeling or iterative refinement.",
+        "confidence": "medium"
+      }
+    ]
+  },
+  "Resource Requirements & Complexity": "Parameter count scales with: embeddings (Conv1d c_in→d_model, temporal embeddings), plus per-layer projections in attention (Q/K/V/out: ~4*d_model^2) and FFN (~2*d_model*d_ff) for each encoder/decoder layer. Compute/memory dominated by FullAttention: attention score tensor is O(B * n_heads * L * S) (self-attn O(L^2)); FFN is O(B * L * d_model * d_ff). Forecasting uses both encoder and decoder, increasing cost roughly proportional to (e_layers*L^2 + d_layers*(L_dec^2 + L_dec*L_enc)).",
+  "Paper Link": "https://proceedings.neurips.cc/paper/2017/file/3f5ee243547dee91fbd053c1c4a845aa-Paper.pdf",
+  "_source_files": [
+    "models/Transformer.py",
+    "layers/Transformer_EncDec.py",
+    "layers/SelfAttention_Family.py",
+    "layers/Embed.py"
+  ]
+}

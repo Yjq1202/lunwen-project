@@ -1,0 +1,100 @@
+{
+  "model_name": "Reformer",
+  "Primary Task Type": "Multitask time-series modeling (Long-term Forecasting / Short-term Forecasting / Imputation / Anomaly Detection / Classification)",
+  "Model Architecture Category": "Transformer-based (Encoder-only) with Reformer/LSH attention",
+  "Core Mechanism & Structure": "An encoder-only time-series Transformer that embeds raw multivariate sequences using convolutional token embedding plus (sinusoidal) absolute positional encoding and optional calendar/time-feature embedding, then processes the sequence with a stack of EncoderLayers whose attention block is replaced by a ReformerLayer (LSHSelfAttention for approximate attention). Outputs are produced via a per-timestep linear projection for forecasting/imputation/anomaly tasks, or via flattening the full encoded sequence followed by a classification head. Forecasting is implemented by concatenating future placeholders to the encoder input and predicting all steps in one pass, finally slicing the last pred_len positions.",
+  "Core Innovations": "1) Reformer-style LSH self-attention (via reformer_pytorch.LSHSelfAttention) to reduce attention complexity compared to full attention for long sequences. 2) Unified encoder-only formulation for multiple tasks (forecasting/imputation/anomaly/classification) with task-specific heads but shared backbone. 3) A simple per-sample normalization path for short-term forecasting (mean/std over time) as a lightweight non-stationarity handling strategy (not RevIN).",
+  "Key Technical Details": {
+    "Input Embedding": "DataEmbedding: TokenEmbedding is a 1D Conv (kernel=3, circular padding) mapping c_in->d_model, summed with PositionalEmbedding (fixed sinusoidal) and optional TemporalEmbedding/TimeFeatureEmbedding from x_mark; followed by dropout.",
+    "Feature Extraction": "Stacked Transformer EncoderLayers: each layer applies ReformerLayer (LSHSelfAttention) then residual + LayerNorm, then position-wise FFN implemented as two 1x1 Conv1d layers (d_model->d_ff->d_model) with GELU/ReLU and dropout.",
+    "Positional Encoding": "Absolute fixed sinusoidal positional embedding (PositionalEmbedding) added to token embedding (and temporal embedding when provided).",
+    "Non-stationarity Handling": "For task_name=='short_term_forecast' only: explicit per-sample normalization over the time dimension (subtract mean, divide by std) before encoding, then de-normalize outputs; no RevIN module present in provided code."
+  },
+  "Evidence": {
+    "Direct Observations": [
+      {
+        "claim": "Encoder-only architecture with Reformer/LSH attention in each encoder layer",
+        "evidence": "models/Reformer.py constructs Encoder([... EncoderLayer(ReformerLayer(...)) ...]) and there is no Decoder used in Model; layers/SelfAttention_Family.py defines ReformerLayer using reformer_pytorch.LSHSelfAttention."
+      },
+      {
+        "claim": "ReformerLayer uses LSHSelfAttention and pads sequence length to satisfy bucket constraints",
+        "evidence": "layers/SelfAttention_Family.py: class ReformerLayer sets self.attn = LSHSelfAttention(... bucket_size, n_hashes ...); fit_length() pads so N % (bucket_size*2)==0 by concatenating zeros."
+      },
+      {
+        "claim": "Embedding = Conv token embedding + sinusoidal positional embedding + optional temporal embedding",
+        "evidence": "layers/Embed.py: DataEmbedding.forward returns value_embedding(x) + temporal_embedding(x_mark) + position_embedding(x) (or without temporal if x_mark is None); TokenEmbedding uses nn.Conv1d(kernel_size=3,padding_mode='circular'); PositionalEmbedding is sinusoidal buffer."
+      },
+      {
+        "claim": "Transformer FFN implemented via 1x1 convolutions with activation and dropout",
+        "evidence": "layers/Transformer_EncDec.py: EncoderLayer has conv1 = nn.Conv1d(d_model,d_ff,1), conv2 = nn.Conv1d(d_ff,d_model,1), activation=relu/gelu, with residual+LayerNorm."
+      },
+      {
+        "claim": "Forecasting is done by concatenating decoder placeholders to encoder input and slicing last pred_len predictions",
+        "evidence": "models/Reformer.py long_forecast/short_forecast: x_enc = torch.cat([x_enc, x_dec[:, -pred_len:, :]], dim=1); forward() returns dec_out[:, -pred_len:, :]."
+      },
+      {
+        "claim": "Short-term forecasting applies per-sample mean/std normalization and reverses it",
+        "evidence": "models/Reformer.py short_forecast: mean_enc = x_enc.mean(1,...); std_enc = sqrt(var(...)+1e-5); x_enc normalized then dec_out = dec_out * std_enc + mean_enc."
+      },
+      {
+        "claim": "Classification head flattens the entire sequence embedding and applies a linear classifier with padding mask",
+        "evidence": "models/Reformer.py classification(): output = gelu(enc_out); output *= x_mark_enc.unsqueeze(-1); output.reshape(B,-1); projection = Linear(d_model*seq_len, num_class)."
+      }
+    ],
+    "Unknown / Not in Code": [
+      "No explicit Decoder is used in models/Reformer.py despite Decoder/DecoderLayer being defined in layers/Transformer_EncDec.py.",
+      "No RevIN (Reversible Instance Normalization) implementation or usage appears in the provided files.",
+      "Although DSAttention/ProbAttention/FullAttention/AutoCorrelation/Fourier* blocks exist in layers/SelfAttention_Family.py, the Reformer model specifically instantiates ReformerLayer only."
+    ]
+  },
+  "Inferred Suitability": {
+    "Strengths": [
+      {
+        "label": "Long-sequence scalability vs full attention",
+        "why": "Self-attention is implemented via LSHSelfAttention (Reformer-style) rather than forming an explicit LxL attention matrix",
+        "conditions": "When sequence length is large (e.g., hundreds to thousands) and full attention would be too slow/memory-heavy",
+        "confidence": "high"
+      },
+      {
+        "label": "Simple, unified backbone for multiple time-series tasks",
+        "why": "Same encoder and embedding are reused across forecasting, imputation, anomaly detection, and classification with only the head differing",
+        "conditions": "When you want a single model family/codepath across tasks and can accept task-specific heads",
+        "confidence": "high"
+      },
+      {
+        "label": "Good inductive bias for local patterns at the input stage",
+        "why": "TokenEmbedding uses a circular-padded Conv1d (kernel=3), which can capture short local dynamics before attention",
+        "conditions": "When signals have meaningful short-range dependencies and periodic boundary effects are acceptable/desired",
+        "confidence": "medium"
+      }
+    ],
+    "Weaknesses": [
+      {
+        "label": "Approximate attention may reduce accuracy on precise alignment dependencies",
+        "why": "LSH attention is an approximation; also the ReformerLayer returns (queries, None) with no explicit attention weights",
+        "conditions": "When the task requires exact global interactions or interpretability via attention maps",
+        "confidence": "medium"
+      },
+      {
+        "label": "Forecasting design uses 'placeholder concatenation' without an explicit decoder/cross-attention",
+        "why": "Model predicts future steps by appending x_dec future placeholders to the encoder input; there is no autoregressive decoding or encoder-decoder separation",
+        "conditions": "When future covariates/known future inputs are important, or when strict causal/stepwise generation is needed",
+        "confidence": "medium"
+      },
+      {
+        "label": "Non-stationarity handling is limited/inconsistent across tasks",
+        "why": "Only short_term_forecast applies mean/std normalization; other tasks/long_term_forecast do not apply the same treatment",
+        "conditions": "When dataset exhibits strong distribution shift/non-stationarity requiring systematic normalization (e.g., RevIN-style) across tasks",
+        "confidence": "medium"
+      }
+    ]
+  },
+  "Resource Requirements & Complexity": "Parameters scale roughly like a standard Transformer encoder: per layer O(d_model^2) for projections/FFN (implemented with 1x1 convs) plus embedding conv. Compute/memory for attention is reduced compared to full attention by LSHSelfAttention (Reformer), typically sub-quadratic and often described as ~O(L log L) behavior; however, practical cost depends on bucket_size and n_hashes and still scales with sequence length. Classification head can be heavy for long seq_len because it uses a Linear(d_model*seq_len -> num_class), making parameters and activation size grow linearly with seq_len.",
+  "Paper Link": "https://openreview.net/forum?id=rkgNKkHtvB",
+  "_source_files": [
+    "models/Reformer.py",
+    "layers/Transformer_EncDec.py",
+    "layers/SelfAttention_Family.py",
+    "layers/Embed.py"
+  ]
+}

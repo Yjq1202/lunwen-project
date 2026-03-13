@@ -1,0 +1,114 @@
+{
+  "model_name": "Autoformer",
+  "Primary Task Type": "Long-/Short-term Time Series Forecasting (also supports Imputation / Anomaly Detection / Classification)",
+  "Model Architecture Category": "Transformer-based (AutoCorrelation-based attention) with series decomposition",
+  "Core Mechanism & Structure": "An Autoformer-style encoder–decoder for time series that replaces dot-product self-attention with an FFT-based AutoCorrelation mechanism. Inputs are embedded via a token Conv1d projection plus optional temporal/calendar features (no absolute positional encoding in the used embedding variant). The encoder stacks multiple EncoderLayers that apply AutoCorrelation self-attention followed by a position-wise Conv1d feed-forward block, with progressive series decomposition (moving-average trend/seasonal separation) applied after both the attention residual and the FFN residual. For forecasting, the decoder takes a seasonality-only sequence (label_len history + zeros for pred_len) as input, performs AutoCorrelation self-attention and cross-attention to encoder outputs, and progressively decomposes to accumulate a trend residual that is added to an externally provided trend initialization (label_len trend history + repeated mean for pred_len). The final forecast is trend + seasonal output, with a Linear projection to c_out. For non-forecast tasks (imputation/anomaly), only the encoder is used followed by a Linear head; for classification, encoder outputs are GELU+dropout, masked by x_mark_enc, flattened, and projected to num_class.",
+  "Core Innovations": "1) FFT-based AutoCorrelation attention that discovers periodic dependencies and aggregates top-k time delays (k ~ factor*log(L)), targeting sub-quadratic long-sequence modeling. 2) Progressive series decomposition (moving average) interleaved within each encoder/decoder layer to separate seasonal vs trend components and stabilize training on non-stationary series. 3) Decoder trend accumulation pathway: trend is explicitly initialized (history trend + mean extension) and refined by residual trend predicted at each decoder layer via a Conv1d projection, then recombined with seasonal output.",
+  "Key Technical Details": {
+    "Input Embedding": "DataEmbedding_wo_pos: TokenEmbedding implemented as Conv1d(kernel=3, circular padding) mapping c_in->d_model, plus TemporalEmbedding (fixed or learnable calendar embeddings, or linear time-feature embedding when embed_type='timeF'); dropout applied. (PositionalEmbedding exists but is not used in DataEmbedding_wo_pos forward).",
+    "Feature Extraction": "AutoCorrelationLayer: linear Q/K/V projections -> AutoCorrelation module. AutoCorrelation computes cross-correlation via rFFT/irFFT on (B,H,E,L) and performs top-k time-delay aggregation (training: batch-normalization-like global top-k indices; inference: per-sample top-k). Each Encoder/Decoder layer also contains a Conv1d-based FFN (1x1 conv expand to d_ff then project back), with residual connections and dropout.",
+    "Positional Encoding": "No explicit positional encoding used in the instantiated embedding path (DataEmbedding_wo_pos omits PositionalEmbedding addition).",
+    "Non-stationarity Handling": "Explicit series decomposition via moving average (series_decomp) applied progressively within layers; forecasting additionally initializes trend with repeated mean of encoder input and separates seasonal/trend streams. Custom my_Layernorm removes per-sample temporal mean bias after LayerNorm."
+  },
+  "Evidence": {
+    "Direct Observations": [
+      {
+        "claim": "Model supports multiple tasks: forecasting, imputation, anomaly detection, classification",
+        "evidence": "models/Autoformer.py: conditional branches on self.task_name in __init__ and forward(): 'long_term_forecast'/'short_term_forecast', 'imputation', 'anomaly_detection', 'classification'."
+      },
+      {
+        "claim": "Uses series decomposition with moving average to separate seasonal and trend components",
+        "evidence": "layers/Autoformer_EncDec.py defines moving_avg and series_decomp; models/Autoformer.py: self.decomp = series_decomp(configs.moving_avg); forecast(): seasonal_init, trend_init = self.decomp(x_enc)."
+      },
+      {
+        "claim": "Encoder uses stacked EncoderLayer blocks with AutoCorrelation-based self-attention and Conv1d FFN, plus progressive decomposition",
+        "evidence": "models/Autoformer.py constructs Encoder([EncoderLayer(AutoCorrelationLayer(AutoCorrelation(...)) ... for l in range(configs.e_layers)]); layers/Autoformer_EncDec.py EncoderLayer.forward(): attention -> residual -> decomp1; Conv1d FFN -> residual -> decomp2."
+      },
+      {
+        "claim": "Decoder uses AutoCorrelation self-attention and cross-attention, and accumulates a residual trend via Conv1d projection",
+        "evidence": "models/Autoformer.py constructs DecoderLayer(self AutoCorrelation(True,...), cross AutoCorrelation(False,...)); layers/Autoformer_EncDec.py DecoderLayer.forward(): self_attention + decomp1; cross_attention + decomp2; FFN + decomp3; residual_trend = trend1+trend2+trend3; residual_trend projected via Conv1d(kernel=3,circular). Decoder.forward(): trend = trend + residual_trend."
+      },
+      {
+        "claim": "AutoCorrelation attention is implemented via FFT-based correlation and top-k time-delay aggregation with k proportional to log(sequence_length)",
+        "evidence": "layers/AutoCorrelation.py AutoCorrelation.forward(): q_fft=torch.fft.rfft(...), k_fft=..., corr=torch.fft.irfft(q_fft*conj(k_fft)); top_k=int(self.factor*math.log(length)) used in time_delay_agg_training/inference; aggregation via torch.roll (training) or gather (inference)."
+      },
+      {
+        "claim": "Embedding used in this model excludes positional encoding and includes a Conv1d token embedding plus optional temporal embeddings",
+        "evidence": "models/Autoformer.py uses DataEmbedding_wo_pos for enc_embedding and dec_embedding; layers/Embed.py DataEmbedding_wo_pos.forward(): if x_mark is None: x=value_embedding(x) else x=value_embedding(x)+temporal_embedding(x_mark); no position_embedding added."
+      },
+      {
+        "claim": "Forecasting decoder input is constructed as seasonal history + zeros and trend history + repeated mean",
+        "evidence": "models/Autoformer.py forecast(): mean=torch.mean(x_enc,dim=1).unsqueeze(1).repeat(1,pred_len,1); zeros=torch.zeros([B,pred_len,D]); trend_init=cat([trend_init[:,-label_len:,:], mean],dim=1); seasonal_init=cat([seasonal_init[:,-label_len:,:], zeros],dim=1)."
+      },
+      {
+        "claim": "Classification head flattens encoder outputs and masks padding positions using x_mark_enc",
+        "evidence": "models/Autoformer.py classification(): output=gelu(enc_out); output=dropout(output); output=output * x_mark_enc.unsqueeze(-1); output=output.reshape(B,-1); projection=Linear(d_model*seq_len,num_class)."
+      },
+      {
+        "claim": "Custom layer normalization removes temporal mean bias (special for seasonal part)",
+        "evidence": "layers/Autoformer_EncDec.py my_Layernorm.forward(): x_hat=LayerNorm(x); bias=mean(x_hat,dim=1) repeated; return x_hat-bias; used as norm_layer in Encoder/Decoder in models/Autoformer.py."
+      }
+    ],
+    "Unknown / Not in Code": [
+      "RevIN or other explicit instance normalization layers (not present in provided files).",
+      "Explicit causal attention mask logic (mask_flag exists in AutoCorrelation but provided code does not implement a triangular mask; attn_mask is passed through but not used inside AutoCorrelation.forward).",
+      "Any explicit probabilistic forecasting head (e.g., quantiles, likelihood) or uncertainty estimation."
+    ]
+  },
+  "Inferred Suitability": {
+    "Strengths": [
+      {
+        "label": "Long-horizon / long-context forecasting efficiency",
+        "why": "AutoCorrelation uses FFT-based correlation and only aggregates top-k delays with k ~ factor*log(L), avoiding full O(L^2) attention matrices",
+        "conditions": "When sequence length L is large (e.g., hundreds to thousands) and periodic/seasonal structure is present",
+        "confidence": "high"
+      },
+      {
+        "label": "Robustness to non-stationarity via explicit trend/seasonal separation",
+        "why": "Progressive moving-average decomposition is applied inside each layer and the decoder explicitly models and accumulates trend separately from seasonality",
+        "conditions": "When series contains strong trend + seasonality components and distribution shifts over time",
+        "confidence": "high"
+      },
+      {
+        "label": "Multi-task reuse of encoder representations",
+        "why": "Imputation/anomaly detection directly project encoder outputs; classification uses encoder features with a simple head",
+        "conditions": "When the same backbone is trained/finetuned across forecasting and representation-based tasks",
+        "confidence": "medium"
+      }
+    ],
+    "Weaknesses": [
+      {
+        "label": "Potential device/portability issue during inference",
+        "why": "AutoCorrelation.time_delay_agg_inference() and time_delay_agg_full() create indices with explicit .cuda(), which can break on CPU or non-default devices",
+        "conditions": "When running inference on CPU or on a different GPU device context",
+        "confidence": "high"
+      },
+      {
+        "label": "Limited benefit on non-periodic or highly irregular dependencies",
+        "why": "Core dependency modeling is based on autocorrelation and time-delay aggregation, which assumes repeatable lag structure",
+        "conditions": "When signals have weak seasonality/periodicity or dependencies are event-driven rather than lag-periodic",
+        "confidence": "medium"
+      },
+      {
+        "label": "No explicit positional encoding in the chosen embedding path",
+        "why": "DataEmbedding_wo_pos does not add PositionalEmbedding; ordering is mostly inferred via convolution and temporal/calendar marks",
+        "conditions": "When x_mark (time features) is absent/uninformative and the model must rely purely on content for ordering",
+        "confidence": "medium"
+      },
+      {
+        "label": "Decomposition hyperparameter sensitivity",
+        "why": "Moving-average kernel size (configs.moving_avg) directly controls trend extraction; poor choices can under/over-smooth",
+        "conditions": "When sampling frequency varies across datasets or when trend scale is unknown",
+        "confidence": "medium"
+      }
+    ]
+  },
+  "Resource Requirements & Complexity": "Parameter count is dominated by per-layer linear projections in AutoCorrelationLayer (Q/K/V/out: ~4*d_model^2) plus Conv1d FFN (d_model->d_ff->d_model, ~2*d_model*d_ff) across e_layers + d_layers, and embedding Conv1d. Compute per layer: FFT-based correlation roughly O(B*H*E*L log L) plus top-k aggregation O(B*H*E*L*k) where k≈factor*log(L); memory is closer to O(B*L*d_model) (no LxL attention matrix). Decoder adds similar costs for self- and cross-AutoCorrelation.",
+  "Paper Link": "https://openreview.net/pdf?id=I55UqU-M11y",
+  "_source_files": [
+    "models/Autoformer.py",
+    "layers/Embed.py",
+    "layers/AutoCorrelation.py",
+    "layers/Autoformer_EncDec.py"
+  ]
+}

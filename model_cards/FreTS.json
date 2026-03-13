@@ -1,0 +1,102 @@
+{
+  "model_name": "FreTS",
+  "Primary Task Type": "Time Series Forecasting (Long-term / Short-term)",
+  "Model Architecture Category": "Frequency-domain MLP-based (FFT + complex-valued linear mixing), no Transformer/attention",
+  "Core Mechanism & Structure": "The model embeds each scalar time-series value by elementwise scaling with a learnable embedding vector (tokenEmb), producing a 4D representation [B, N, T, D]. It then applies two frequency-domain MLP blocks implemented via rFFT/irFFT: (1) an optional channel-mixing block that FFTs along the channel dimension N (after permuting to [B, T, N, D]) and applies a complex-valued linear transform in the embedding dimension D using separate real/imaginary weights; (2) a temporal-mixing block that FFTs along the time dimension T and applies the same style of complex-valued embedding-dimension mixing. Both frequency blocks include ReLU on real/imag parts and a complex soft-shrinkage sparsification. A residual connection adds the original embedded input (bias) back. Finally, it flattens [T, D] per channel and uses an MLP head (Linear->LeakyReLU->Linear) to map to pred_len, outputting [B, pred_len, N].",
+  "Core Innovations": "1) Frequency-domain complex MLP: Uses rFFT along time and/or channel dimensions and applies complex-valued linear transformations (separate real/imag parameters) with nonlinearities to learn frequency responses without attention. 2) Dual-axis spectral learning: Separately models inter-channel dependencies (FFT over channels) and temporal dependencies (FFT over time), controlled by a channel_independence switch. 3) Explicit sparsification in the spectral domain: Applies softshrink to complex spectra to encourage sparse frequency components.",
+  "Key Technical Details": {
+    "Input Embedding": "Elementwise token embedding via a learnable vector 'embeddings' of shape [1, D]; input x is reshaped to [B, N, T, 1] and multiplied to become [B, N, T, D] (no linear projection across channels/time).",
+    "Feature Extraction": "Two FFT-based mixers: (a) optional channel-frequency learner (rFFT over channel axis N after permute), (b) temporal-frequency learner (rFFT over time axis T). In both, FreMLP performs complex-valued embedding-dimension mixing via einsum with D×D weights for real/imag parts, ReLU, then softshrink sparsification, followed by irFFT back to the original domain.",
+    "Positional Encoding": "No positional encoding (no absolute/relative/learnable PE present).",
+    "Non-stationarity Handling": "No explicit non-stationarity module (no RevIN, decomposition, differencing, or normalization layers in the provided code)."
+  },
+  "Evidence": {
+    "Direct Observations": [
+      {
+        "claim": "Implements only forecasting forward pass (long_term_forecast / short_term_forecast) and raises error otherwise",
+        "evidence": "models/FreTS.py: Model.forward checks task_name in {'long_term_forecast','short_term_forecast'} and else: raise ValueError('Only forecast tasks implemented yet')"
+      },
+      {
+        "claim": "Uses FFT-based processing (rFFT/irFFT) for temporal mixing",
+        "evidence": "models/FreTS.py: MLP_temporal uses torch.fft.rfft(x, dim=2) then FreMLP(...) then torch.fft.irfft(..., dim=2)"
+      },
+      {
+        "claim": "Optionally uses FFT-based processing across channels for channel mixing depending on channel_independence",
+        "evidence": "models/FreTS.py: forecast(): if self.channel_independence == '0': x = self.MLP_channel(...); MLP_channel permutes and applies torch.fft.rfft(..., dim=2) with n=self.feature_size in irfft"
+      },
+      {
+        "claim": "Complex-valued MLP weights are implemented via separate real/imag parameters and assembled back into complex numbers",
+        "evidence": "models/FreTS.py: parameters r1,i1,rb1,ib1 and r2,i2,rb2,ib2; FreMLP computes o1_real/o1_imag then torch.stack(..., dim=-1) and torch.view_as_complex(y)"
+      },
+      {
+        "claim": "Spectral sparsification is applied with softshrink",
+        "evidence": "models/FreTS.py: FreMLP contains y = F.softshrink(y, lambd=self.sparsity_threshold)"
+      },
+      {
+        "claim": "Input embedding is elementwise scaling with a learnable embedding vector (not a standard linear layer projection)",
+        "evidence": "models/FreTS.py: tokenEmb(): x reshaped to [B,N,T,1] then return x * self.embeddings where embeddings is nn.Parameter(torch.randn(1, self.embed_size))"
+      },
+      {
+        "claim": "Output head is an MLP over flattened (seq_len * embed_size) per channel producing pred_len",
+        "evidence": "models/FreTS.py: self.fc = Sequential(Linear(seq_len*embed_size->hidden_size), LeakyReLU, Linear(hidden_size->pred_len)); forecast(): self.fc(x.reshape(B, N, -1)).permute(0,2,1)"
+      },
+      {
+        "claim": "Residual connection adds the embedded input back after spectral mixing",
+        "evidence": "models/FreTS.py: forecast(): bias = x; ... x = self.MLP_temporal(...); x = x + bias"
+      }
+    ],
+    "Unknown / Not in Code": [
+      "Any attention mechanism (self-attention/cross-attention) is not present.",
+      "Any explicit encoder-decoder stack is not present.",
+      "Any positional encoding module is not present.",
+      "Any normalization/non-stationarity handling like RevIN or series decomposition is not present."
+    ]
+  },
+  "Inferred Suitability": {
+    "Strengths": [
+      {
+        "label": "Efficient long-context temporal modeling without attention",
+        "why": "Temporal dependency learning uses FFT (rFFT/irFFT) plus per-frequency complex mixing; FFT scales ~O(B*N*D*T log T) rather than O(T^2)",
+        "conditions": "When sequence length T is large (e.g., >512–1024) and attention would be costly",
+        "confidence": "high"
+      },
+      {
+        "label": "Captures periodic/seasonal structure well",
+        "why": "Explicit frequency-domain processing and spectral sparsification can emphasize salient frequencies",
+        "conditions": "When data contains strong periodicities/seasonality (energy concentrated in a few frequencies)",
+        "confidence": "medium"
+      },
+      {
+        "label": "Flexible handling of multivariate series with optional channel mixing",
+        "why": "Can mix channels via FFT along the channel axis when channel_independence == '0', or skip it for per-channel modeling",
+        "conditions": "When channel relationships are either important (enable mixing) or largely independent (disable mixing)",
+        "confidence": "medium"
+      }
+    ],
+    "Weaknesses": [
+      {
+        "label": "Limited modeling of localized/time-varying interactions",
+        "why": "Global spectral mixing tends to be less expressive for abrupt regime changes and localized events than architectures with local convolution or attention over time",
+        "conditions": "When the series has non-stationary, transient spikes, changepoints, or event-driven dynamics",
+        "confidence": "medium"
+      },
+      {
+        "label": "Channel-mixing via FFT over channels may be ill-suited for unordered features",
+        "why": "FFT assumes an ordered axis with meaningful notion of frequency; channel dimension often lacks natural adjacency/order",
+        "conditions": "When channel order is arbitrary (e.g., heterogeneous sensors with no spatial ordering)",
+        "confidence": "medium"
+      },
+      {
+        "label": "Forecast head discards explicit temporal structure by flattening",
+        "why": "Flattening [T, D] into a single vector per channel then using an MLP may reduce inductive bias for temporal alignment and multi-horizon structure",
+        "conditions": "When very long horizons or complex multi-step dependencies require structured decoding",
+        "confidence": "low"
+      }
+    ]
+  },
+  "Resource Requirements & Complexity": "Parameters: dominated by two complex mixing matrices per FreMLP block: r1,i1,r2,i2 each of size D×D (D=128), plus biases (size D) and the output MLP head (Linear(seq_len*D -> 256) and Linear(256 -> pred_len)). Compute: FFT/ iFFT costs ~O(B*N*D*T log T) for temporal block; channel block (if enabled) adds ~O(B*T*D*N log N). FreMLP mixing uses einsum per spectral bin with cost ~O(B*nd*(dimension/2)*D^2). Memory is moderate; no O(T^2) attention matrices.",
+  "Paper Link": "https://arxiv.org/pdf/2311.06184.pdf",
+  "_source_files": [
+    "models/FreTS.py"
+  ]
+}

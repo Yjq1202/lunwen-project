@@ -1,0 +1,111 @@
+{
+  "model_name": "Crossformer",
+  "Primary Task Type": "Long-term / short-term multivariate time series forecasting (with additional heads for imputation, anomaly detection, and classification)",
+  "Model Architecture Category": "Transformer-based (hierarchical patch/segment Transformer with Two-Stage Attention + encoder-decoder cross-attention)",
+  "Core Mechanism & Structure": "A segment-wise (patch) encoder–decoder Transformer for multivariate time series. The input sequence is padded to a multiple of a fixed segment length (seg_len=12), then patch-embedded per variable into tokens of shape [B, D(vars), L(segments), d_model]. The encoder is a hierarchy of scale blocks: each scale can optionally merge adjacent segments via concatenation+linear projection (SegMerging, controlled by win_size), then applies TwoStageAttentionLayer which performs (1) intra-variable temporal self-attention over segments and (2) cross-variable message passing through a small set of learnable router tokens. The decoder starts from a learned positional embedding tensor (no dependence on x_dec), applies per-layer self-attention via TwoStageAttentionLayer and cross-attends to the corresponding encoder scale output using FullAttention. Each decoder layer produces a per-segment prediction (linear_pred: d_model→seg_len), and predictions from all decoder layers are summed (multi-scale deep supervision style) to form the final forecast, then reshaped back to [B, pred_len, D]. For imputation/anomaly/classification, it bypasses the encoder-decoder forecasting head and uses a flatten+linear head over the last encoder scale representation.",
+  "Core Innovations": "1) Two-Stage Attention (TSA): decomposes attention into a temporal stage (per-variable attention across segments) and a dimension stage that builds variable-to-variable dependencies using a small set of learnable router tokens (factor-sized) to aggregate/distribute messages. 2) Hierarchical multi-scale encoding via segment merging (SegMerging) with windowed downsampling across encoder layers, enabling longer receptive field with reduced token count at deeper scales. 3) Decoder with multi-scale cross-attention: each decoder layer cross-attends to a different encoder scale output and produces a segment-level prediction; layer-wise predictions are summed to yield the final output, encouraging multi-resolution reconstruction/forecasting.",
+  "Key Technical Details": {
+    "Input Embedding": "Patch/segment embedding per variable using layers.Embed.PatchEmbedding with patch_len=stride=seg_len=12 and replication padding to make seq_len divisible; patch vectors (length 12) are projected by a linear layer to d_model and augmented with sinusoidal PositionalEmbedding. Additionally, the model adds a learnable encoder positional embedding enc_pos_embedding of shape [1, enc_in, in_seg_num, d_model]. Decoder input is a learned tensor dec_pos_embedding of shape [1, enc_in, out_seg_num, d_model] repeated for the batch.",
+    "Feature Extraction": "Encoder feature extraction uses TwoStageAttentionLayer inside scale_block. TwoStageAttentionLayer uses FullAttention-based AttentionLayer three times: (a) time_attention over segments for each variable; (b) dim_sender from learnable router tokens to variable tokens; (c) dim_receiver from variable tokens to router-informed buffer. Between attention stages are residual connections, LayerNorm, and 2-layer MLPs with GELU. The decoder uses a TwoStageAttentionLayer for decoder self-attention and a standard FullAttention-based cross-attention to encoder tokens, followed by an MLP and a linear head mapping each token to seg_len outputs.",
+    "Positional Encoding": "Both sinusoidal absolute positional encoding (layers.Embed.PositionalEmbedding) inside PatchEmbedding and additional learnable positional embeddings at the segment level for encoder (enc_pos_embedding) and decoder (dec_pos_embedding).",
+    "Non-stationarity Handling": "No explicit RevIN or series decomposition in Crossformer. Unlike models/PatchTST.py (which includes per-sample normalization/de-normalization in forward paths), models/Crossformer.py does not normalize inputs beyond a LayerNorm (pre_norm) applied after adding embeddings."
+  },
+  "Evidence": {
+    "Direct Observations": [
+      {
+        "claim": "Segment-wise (patch) embedding with fixed seg_len=12 and replication padding to handle non-multiple lengths",
+        "evidence": "models/Crossformer.py sets self.seg_len=12; computes pad_in_len/pad_out_len via ceil(...)*seg_len; uses PatchEmbedding(..., self.seg_len, self.seg_len, self.pad_in_len - configs.seq_len, 0) which internally applies nn.ReplicationPad1d((0, padding)) and unfold(size=patch_len, step=stride) in layers/Embed.py::PatchEmbedding.forward"
+      },
+      {
+        "claim": "Encoder is hierarchical multi-scale with optional segment merging (downsampling) controlled by win_size",
+        "evidence": "models/Crossformer.py builds Encoder([scale_block(..., 1 if l is 0 else self.win_size, ... , seg_num=...)] for l in range(configs.e_layers)); layers/Crossformer_EncDec.py::scale_block uses SegMerging when win_size>1; SegMerging concatenates win_size segments then projects via nn.Linear(win_size*d_model, d_model)"
+      },
+      {
+        "claim": "Core attention in encoder blocks is Two-Stage Attention (TSA)",
+        "evidence": "layers/Crossformer_EncDec.py::scale_block appends TwoStageAttentionLayer(...); layers/SelfAttention_Family.py::TwoStageAttentionLayer defines time_attention + dim_sender + dim_receiver and a learnable router parameter self.router (seg_num, factor, d_model)"
+      },
+      {
+        "claim": "Decoder uses learned positional tokens as input (does not use x_dec values) and cross-attends to multi-scale encoder outputs",
+        "evidence": "models/Crossformer.py::forecast sets dec_in = repeat(self.dec_pos_embedding, ... repeat=batch); passes self.decoder(dec_in, enc_out); layers/Crossformer_EncDec.py::Decoder.forward uses cross_enc = cross[i] where cross is the list from Encoder (multi-scale outputs)"
+      },
+      {
+        "claim": "Decoder cross-attention is FullAttention-based multi-head attention; decoder self-attention is TwoStageAttentionLayer",
+        "evidence": "models/Crossformer.py constructs each DecoderLayer(TwoStageAttentionLayer(...), AttentionLayer(FullAttention(False,...), d_model, n_heads), ...); layers/Crossformer_EncDec.py::DecoderLayer.forward calls self.self_attention(x) then self.cross_attention(x, cross, cross, ...)"
+      },
+      {
+        "claim": "Layer-wise segment predictions are produced at each decoder layer and summed to form final forecast",
+        "evidence": "layers/Crossformer_EncDec.py::DecoderLayer has linear_pred = nn.Linear(d_model, seg_len) and returns layer_predict; layers/Crossformer_EncDec.py::Decoder.forward accumulates final_predict = final_predict + layer_predict across layers and reshapes to [B, (seg_num*seg_len), out_d]"
+      },
+      {
+        "claim": "Supports multiple tasks with different heads: forecasting uses encoder-decoder; imputation/anomaly use FlattenHead on last encoder output; classification uses flatten+linear projection",
+        "evidence": "models/Crossformer.py::forward branches by task_name; for imputation/anomaly uses self.head = FlattenHead(..., target_window=configs.seq_len); dec_out = self.head(enc_out[-1].permute(...)); classification defines self.projection = nn.Linear(self.head_nf * configs.enc_in, configs.num_class)"
+      },
+      {
+        "claim": "Uses both sinusoidal positional embeddings (inside PatchEmbedding) and learnable segment positional embeddings",
+        "evidence": "layers/Embed.py::PatchEmbedding adds self.position_embedding = PositionalEmbedding(d_model) to value_embedding; models/Crossformer.py defines enc_pos_embedding and dec_pos_embedding as nn.Parameter(torch.randn(...)) and adds enc_pos_embedding to x_enc"
+      }
+    ],
+    "Unknown / Not in Code": [
+      "RevIN is not present/used in the provided Crossformer model code.",
+      "Temporal/calendar feature embeddings (x_mark_enc/x_mark_dec) are not used in Crossformer.forward paths despite being passed as arguments."
+    ]
+  },
+  "Inferred Suitability": {
+    "Strengths": [
+      {
+        "label": "Efficient multivariate dependency modeling",
+        "why": "TSA avoids full joint attention over (variables × time tokens) by separating temporal attention (per variable) and cross-variable interaction through a small router set (factor), which can reduce complexity versus naive global attention and encourage structured variable-to-variable communication",
+        "conditions": "When the number of variables is moderate-to-large (e.g., dozens to hundreds) and capturing inter-variable relations matters",
+        "confidence": "high"
+      },
+      {
+        "label": "Long-horizon forecasting via hierarchical multi-scale encoding",
+        "why": "SegMerging downscales segment count across encoder layers (win_size=2), increasing receptive field and allowing deeper layers to operate on fewer tokens",
+        "conditions": "When seq_len is large (hundreds to thousands) and e_layers>=2 so merging occurs",
+        "confidence": "high"
+      },
+      {
+        "label": "Stable training signal through multi-layer prediction summation",
+        "why": "Each decoder layer emits a segment-level prediction and the final forecast sums predictions across layers, providing supervision at multiple representation depths/scales",
+        "conditions": "When training deeper models (larger e_layers) or when multi-scale patterns exist",
+        "confidence": "medium"
+      }
+    ],
+    "Weaknesses": [
+      {
+        "label": "Forecasting decoder ignores known future covariates and past target values in decoder input",
+        "why": "Decoder input is purely a learned dec_pos_embedding; x_dec and x_mark_dec are not used in forecast(), limiting the ability to condition on future exogenous features/time markers",
+        "conditions": "When the task requires conditioning on future-known covariates (e.g., holidays, planned interventions) or autoregressive decoding behavior",
+        "confidence": "high"
+      },
+      {
+        "label": "Potential loss of fine-grained temporal detail due to fixed segment length",
+        "why": "The model tokenizes into non-overlapping segments with patch_len=stride=seg_len=12; within-segment structure is compressed by a single linear projection and only recovered through linear_pred, which may underfit sharp local events",
+        "conditions": "When important dynamics occur at sub-segment resolution or as brief spikes within 12-step windows",
+        "confidence": "medium"
+      },
+      {
+        "label": "Quadratic attention cost over segment tokens within TSA and decoder cross-attention",
+        "why": "FullAttention is used in time_attention (over seg_num) and in decoder cross-attention (out_seg_num × in_seg_num), giving O(seg_num^2) per attention call (though seg_num is reduced by merging)",
+        "conditions": "When seg_num is still large (very long sequences with small seg_len) or when batch size is large",
+        "confidence": "medium"
+      },
+      {
+        "label": "No explicit non-stationarity normalization in Crossformer path",
+        "why": "Unlike PatchTST (which normalizes/de-normalizes inputs), Crossformer only applies LayerNorm after embeddings; may be more sensitive to scale shifts/trends across datasets",
+        "conditions": "When datasets exhibit strong distribution shift, varying scales across series, or pronounced non-stationarity",
+        "confidence": "medium"
+      }
+    ]
+  },
+  "Resource Requirements & Complexity": "Let B=batch, D=number of variables (enc_in), L=in_seg_num≈ceil(seq_len/seg_len), d=d_model, H=n_heads, r=factor (router count), w=win_size. Patch embedding is O(B*D*L*seg_len*d). In each TSA layer: temporal attention runs on (B*D) sequences length L with FullAttention => O(B*D*H*L^2) time and O(B*D*H*L^2) attention memory (unless optimized), plus router-mediated cross-dimension attention: sender attention between (B*L) sequences of length r (queries) and D (keys) and receiver attention between D and r => roughly O(B*L*H*(r*D + D*r)) = O(B*L*H*D*r). Encoder reduces L by w per scale via SegMerging, lowering deeper attention cost. Decoder has (e_layers+1) layers: each does TSA on out_seg_num plus cross-attention FullAttention between out_seg_num and in_seg_num at that scale. Parameter count is dominated by QKV/out projections in multiple AttentionLayers, MLPs in TSA/DecoderLayer, and SegMerging linear layers; scales roughly with O(#layers * d^2) plus router parameters O(L*r*d) per TSA instantiation (router is per seg_num at each scale).",
+  "Paper Link": "https://openreview.net/pdf?id=vSVLM2j9eie",
+  "_source_files": [
+    "models/Crossformer.py",
+    "layers/Crossformer_EncDec.py",
+    "layers/SelfAttention_Family.py",
+    "layers/Embed.py",
+    "models/PatchTST.py",
+    "layers/Transformer_EncDec.py"
+  ]
+}

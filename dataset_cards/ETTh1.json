@@ -1,0 +1,52 @@
+{
+  "meta": {
+    "dataset_name": "ETTh1",
+    "file_name": "ETTh1.csv",
+    "task_type": "MTS",
+    "num_rows": 17420,
+    "num_cols": 7,
+    "freq": "Unknown",
+    "prediction_settings": {
+      "horizons": [
+        96,
+        192,
+        336,
+        720
+      ],
+      "lookback": 96
+    }
+  },
+  "stats": {
+    "missing_rate": 0.0,
+    "mean": 13.32,
+    "std": 8.57,
+    "cv": 0.64,
+    "skewness": 0.97,
+    "kurtosis": 0.78,
+    "adf_p_value": 0.1319,
+    "is_stationary_adf": false,
+    "trend_linearity_r2": 0.39,
+    "trend_slope": -0.0011,
+    "seasonality_strength": 0.05,
+    "main_period": 8710.0,
+    "autocorr_lag1": 0.99
+  },
+  "tags": {
+    "non_stationary": true,
+    "strong_trend": false,
+    "strong_seasonality": false,
+    "high_noise": false,
+    "has_missing_values": false
+  },
+  "semantic_info": {
+    "dataset_name_pretty": "Electricity Transformer Temperature (Hourly)",
+    "domain": "Energy",
+    "description": "The data originates from the ETTh1 dataset, likely focused on monitoring electricity transformer temperatures over time. It contains 17,420 hourly records across seven key measurements. The dataset exhibits non-stationary behavior as the Augmented Dickey-Fuller test suggests a lack of stationarity with a p-value of 0.1319. There are no missing values, indicating consistent data collection. The data shows no strong trend or seasonality, supported by a low trend linearity (R2 = 0.39) and weak seasonality strength. High autocorrelation at lag 1 (0.99) suggests persistence in the data but with subtle changes over time, making prediction challenging.",
+    "recommended_model_types": [
+      "Normalization-based Transformers",
+      "Linear Models",
+      "Robust Models"
+    ],
+    "reasoning_for_recommendation": "Given the non-stationary nature and absence of strong seasonality or trend, normalization-based models and linear approaches are apt to handle distribution shifts, while robust models can manage the low noise environment."
+  }
+}

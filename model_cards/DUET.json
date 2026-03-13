@@ -1,0 +1,113 @@
+{
+  "model_name": "DUET",
+  "Primary Task Type": "Multivariate time series forecasting (direct multi-step output)",
+  "Model Architecture Category": "Hybrid MoE + Transformer (channel-attention) with decomposition and RevIN-style normalization",
+  "Core Mechanism & Structure": "The model is a two-stage forecaster: (1) a sparsely-gated Mixture-of-Experts (MoE) temporal feature extractor that decomposes each input series into seasonal/trend components (moving-average decomposition) and projects the lookback window (seq_len) into a latent temporal representation of size d_model; (2) a channel-wise Transformer encoder that performs full self-attention across variables (treating variables as tokens) using a learned stochastic Mahalanobis frequency-domain mask to sparsify/structure inter-variable attention. Finally, a linear head maps each variable’s d_model embedding to the forecast horizon pred_len, and outputs are denormalized via RevIN-like per-sample normalization.",
+  "Core Innovations": "1) Sparsely-gated MoE over temporal linear-decomposition experts: a Noisy Top-k router assigns each sample (or each channel if CI) to k experts to compute temporal representations efficiently and adaptively. 2) Stochastic, learnable frequency-domain channel mask: inter-variable dependencies are estimated via FFT magnitude differences and a learnable Mahalanobis metric, then sampled with hard Gumbel-Softmax to produce a binary attention mask. 3) Factorized modeling of time vs. variables: temporal patterns are extracted by linear/decomposition experts, while cross-variable interactions are modeled separately by a channel-attention Transformer.",
+  "Key Technical Details": {
+    "Input Embedding": "No explicit token embedding for time; instead, temporal encoding is produced by linear layers that map seq_len -> d_model after series decomposition. Variables become tokens for the channel Transformer by reshaping to [B, n_vars, d_model].",
+    "Feature Extraction": "Temporal: MoE of Linear_extractor experts using moving-average series decomposition (seasonal + trend) and linear projection. Cross-variable: full multi-head self-attention across variables (Encoder with AttentionLayer(FullAttention)), optionally masked by Mahalanobis_mask.",
+    "Positional Encoding": "No explicit positional encoding found (neither temporal nor channel positional embeddings are defined in the provided code).",
+    "Non-stationarity Handling": "RevIN-style per-sample normalization/denormalization via layers/StandardNorm.py::Normalize used inside Linear_extractor_cluster (self.revin(x,'norm')) and denorm applied to final outputs in models/DUET.py (self.cluster.revin(output,'denorm')). Also uses series decomposition (moving average) inside each expert."
+  },
+  "Evidence": {
+    "Direct Observations": [
+      {
+        "claim": "Uses a sparsely-gated Mixture-of-Experts (MoE) with Noisy Top-k gating",
+        "evidence": "layers/linear_extractor_cluster.py: class Linear_extractor_cluster defines noisy_top_k_gating(), uses self.noisy_gating, self.k, softmax + topk, and SparseDispatcher to dispatch/combine expert outputs."
+      },
+      {
+        "claim": "Experts are linear seasonal+trend extractors with moving-average series decomposition",
+        "evidence": "layers/linear_extractor_cluster.py: self.experts = nn.ModuleList([expert(config) ...]); layers/linear_pattern_extractor.py: class Linear_extractor uses series_decomp(configs.moving_avg) and two Linear layers Linear_Seasonal/Linear_Trend mapping seq_len -> pred_len where pred_len=configs.d_model."
+      },
+      {
+        "claim": "Applies RevIN-like normalization and denormalization around the MoE expert processing",
+        "evidence": "layers/linear_extractor_cluster.py: self.revin = RevIN(self.n_vars) where RevIN is layers/StandardNorm.py::Normalize; forward(): x_norm = self.revin(x,'norm'); models/DUET.py: output = self.cluster.revin(output,'denorm')."
+      },
+      {
+        "claim": "Optional channel-independent (CI) processing by reshaping batch and variables",
+        "evidence": "models/DUET.py: if self.CI: rearrange(x_enc,'b l n -> (b n) l 1') before cluster; layers/linear_extractor_cluster.py forward(): special CI normalization path rearranging '(x y) l c -> x l (y c)'."
+      },
+      {
+        "claim": "Uses a Transformer-style encoder over variables (channels) with multi-head full attention",
+        "evidence": "models/DUET.py: self.Channel_transformer = Encoder([EncoderLayer(AttentionLayer(FullAttention(...))) ...]); then temporal_feature rearranged to 'b n d' and fed into Channel_transformer."
+      },
+      {
+        "claim": "Uses a learned stochastic attention mask derived from frequency-domain Mahalanobis distance",
+        "evidence": "layers/DUET_EncDec.py: class Mahalanobis_mask computes XF=abs(rfft(X)); uses learnable nn.Parameter A; compute distances, convert to probabilities p; samples binary mask via gumbel_softmax(hard=True) in bernoulli_gumbel_rsample(); models/DUET.py: channel_mask = self.mask_generator(changed_input) and passed as attn_mask."
+      },
+      {
+        "claim": "Forecast head is a per-variable linear projection from d_model to pred_len",
+        "evidence": "models/DUET.py: self.linear_head = nn.Sequential(nn.Linear(config.d_model, config.pred_len), ...); output = self.linear_head(channel_group_feature); then rearranged to [B, pred_len, n_vars]."
+      },
+      {
+        "claim": "Cross-variable attention is only applied when n_vars > 1",
+        "evidence": "models/DUET.py: if self.n_vars > 1: run mask + Channel_transformer; else skip and directly apply linear_head."
+      }
+    ],
+    "Unknown / Not in Code": [
+      "No explicit decoder module is used in models/DUET.py despite x_dec/x_mark_dec being in the forward signature.",
+      "No explicit temporal positional encoding or time-feature embedding (x_mark_enc) is used anywhere in the shown forward paths.",
+      "No explicit probabilistic forecasting head (distribution parameters, quantiles) is implemented; output is point forecasts."
+    ]
+  },
+  "Inferred Suitability": {
+    "Strengths": [
+      {
+        "label": "Adaptive specialization across diverse temporal patterns",
+        "why": "Sparsely-gated MoE routes samples (or channels) to different decomposition+linear experts using Noisy Top-k gating, enabling pattern-specific processing without running all experts.",
+        "conditions": "Datasets with heterogeneous regimes across samples or variables (e.g., mixed periodicities/trends, multiple sensors with different behaviors).",
+        "confidence": "high"
+      },
+      {
+        "label": "Robustness to non-stationarity / scale shifts",
+        "why": "Per-sample normalization/denormalization (RevIN-like Normalize) reduces distribution shift; decomposition separates trend/seasonal components in each expert.",
+        "conditions": "Time series with changing mean/variance and strong trend/seasonality.",
+        "confidence": "high"
+      },
+      {
+        "label": "Inter-variable dependency modeling with structured sparsity",
+        "why": "Channel Transformer attends across variables, and Mahalanobis_mask encourages attention to focus on frequency-similar channels via a sampled binary mask.",
+        "conditions": "Multivariate forecasting where correlations are sparse or frequency-dependent (some variables relate only to a subset).",
+        "confidence": "medium"
+      }
+    ],
+    "Weaknesses": [
+      {
+        "label": "Limited explicit temporal sequence modeling beyond linear projection",
+        "why": "Temporal modeling is primarily linear (seq_len -> d_model) after decomposition; there is no temporal self-attention or recurrent/conv temporal encoder in the main model path.",
+        "conditions": "Tasks requiring complex nonlinear temporal dynamics or long-range temporal interactions not captured by decomposition + linear mapping.",
+        "confidence": "medium"
+      },
+      {
+        "label": "Quadratic cost in number of variables for channel attention",
+        "why": "FullAttention computes scores with einsum producing [B,H,n_vars,n_vars]; complexity O(n_vars^2) and memory scales similarly (plus mask).",
+        "conditions": "High-dimensional multivariate settings with large n_vars (e.g., hundreds+ channels).",
+        "confidence": "high"
+      },
+      {
+        "label": "Potential training instability / variance from hard Gumbel-Softmax masking",
+        "why": "Mahalanobis_mask uses gumbel_softmax(..., hard=True) to sample binary masks, which can introduce high-variance gradients and sensitivity to initialization.",
+        "conditions": "Small datasets, noisy signals, or when learned A/mask quickly collapses to trivial patterns (too sparse or too dense).",
+        "confidence": "medium"
+      },
+      {
+        "label": "Auxiliary MoE load-balancing loss is computed but not clearly integrated at top level",
+        "why": "Linear_extractor_cluster.forward returns (y, loss) but models/DUET.py only uses L_importance and never adds it to the final training loss inside the model.",
+        "conditions": "If the external training loop does not explicitly add L_importance to the objective, expert collapse / poor utilization can occur.",
+        "confidence": "high"
+      }
+    ]
+  },
+  "Resource Requirements & Complexity": "Parameters: dominated by (a) num_experts copies of Linear_extractor (two Linear layers seq_len->d_model each, plus decomposition with AvgPool) and (b) channel Transformer projections (QKV/out) across d_model with e_layers layers. Compute: MoE runs only k experts per sample (sparse), so temporal cost is ~O(B*k*seq_len*d_model) for the linear maps (plus decomposition). Channel attention cost is ~O(B*n_heads*n_vars^2*d_head) with masking overhead; this is independent of seq_len because tokens are variables, not timesteps. Memory: attention matrices scale with n_vars^2.",
+  "Paper Link": "https://arxiv.org/pdf/2205.13504.pdf",
+  "_source_files": [
+    "models/DUET.py",
+    "layers/linear_extractor_cluster.py",
+    "layers/linear_pattern_extractor.py",
+    "layers/Autoformer_EncDec.py",
+    "layers/distributional_router_encoder.py",
+    "layers/StandardNorm.py",
+    "layers/DUET_EncDec.py"
+  ]
+}

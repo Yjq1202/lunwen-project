@@ -1,0 +1,52 @@
+{
+  "meta": {
+    "dataset_name": "weather",
+    "file_name": "weather.csv",
+    "task_type": "MTS",
+    "num_rows": 52696,
+    "num_cols": 21,
+    "freq": "Unknown",
+    "prediction_settings": {
+      "horizons": [
+        96,
+        192,
+        336,
+        720
+      ],
+      "lookback": 96
+    }
+  },
+  "stats": {
+    "missing_rate": 0.0,
+    "mean": 417.8,
+    "std": 321.57,
+    "cv": 0.77,
+    "skewness": -32.25,
+    "kurtosis": 1041.83,
+    "adf_p_value": 0.0005,
+    "is_stationary_adf": true,
+    "trend_linearity_r2": 0.0,
+    "trend_slope": 0.0006,
+    "seasonality_strength": 0.0,
+    "main_period": 143.98,
+    "autocorr_lag1": 0.96
+  },
+  "tags": {
+    "non_stationary": false,
+    "strong_trend": false,
+    "strong_seasonality": false,
+    "high_noise": false,
+    "has_missing_values": false
+  },
+  "semantic_info": {
+    "dataset_name_pretty": "Weather Monitoring Data",
+    "domain": "Meteorology",
+    "description": "The dataset captures weather conditions, including atmospheric pressure, temperature, humidity, and wind metrics. Notably, the data shows no missing values and maintains stationarity as indicated by the ADF test results. Despite the absence of strong trends or seasonality, evidenced by low coefficients, the series displays extremely high skewness and kurtosis, suggesting the presence of outliers or infrequent extreme events. The main period identified does not coincide with known seasonal periods, indicating irregular periodicity. The high autocorrelation at lag 1 hints at persistent effects over short timescales, presenting unique challenges for modeling especially in capturing these nuanced patterns.",
+    "recommended_model_types": [
+      "Linear Models",
+      "Normalization-based Transformers",
+      "Robust Models"
+    ],
+    "reasoning_for_recommendation": "Due to the high skewness with no strong trend or seasonality, models that handle stationarity and capture intricate dependencies, like linear models and normalization-based transformers, are suitable."
+  }
+}

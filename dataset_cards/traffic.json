@@ -1,0 +1,53 @@
+{
+  "meta": {
+    "dataset_name": "traffic",
+    "file_name": "traffic.csv",
+    "task_type": "MTS",
+    "num_rows": 17544,
+    "num_cols": 862,
+    "freq": "Unknown",
+    "prediction_settings": {
+      "horizons": [
+        96,
+        192,
+        336,
+        720
+      ],
+      "lookback": 96
+    }
+  },
+  "stats": {
+    "missing_rate": 0.0,
+    "mean": 0.03,
+    "std": 0.02,
+    "cv": 0.62,
+    "skewness": 0.19,
+    "kurtosis": -0.24,
+    "adf_p_value": 0.0,
+    "is_stationary_adf": true,
+    "trend_linearity_r2": 0.03,
+    "trend_slope": 0.0,
+    "seasonality_strength": 0.05,
+    "main_period": 24.0,
+    "autocorr_lag1": 0.94
+  },
+  "tags": {
+    "non_stationary": false,
+    "strong_trend": false,
+    "strong_seasonality": false,
+    "high_noise": false,
+    "has_missing_values": false
+  },
+  "semantic_info": {
+    "dataset_name_pretty": "Traffic Volume Data",
+    "domain": "Traffic",
+    "description": "The dataset named 'traffic' captures traffic volume measurements from multiple sensors over a significant time period. With no missing data and a primarily stationary series, the data exhibits a slightly positive skewness and near-normal kurtosis. The key characteristics include strong autocorrelation at lag 1 but minimal trend and seasonality, as indicated by low trend slope and seasonality strength. This suggests that while the dataset is robust in terms of stationarity, its predictability over extended horizons may require consideration of its subtle periodicity and high autocorrelation when developing forecasting models.",
+    "recommended_model_types": [
+      "Decomposition Transformers",
+      "Frequency-domain Models",
+      "Linear Models",
+      "Normalization-based Transformers"
+    ],
+    "reasoning_for_recommendation": "Given the dataset's high autocorrelation and long sequence length, models that can manage subtle periodicity and autocorrelation such as decomposition transformers, frequency-domain models, and linear models are ideal."
+  }
+}

@@ -1,0 +1,100 @@
+{
+  "model_name": "iTransformer",
+  "Primary Task Type": "Multitask Time Series Modeling (Forecasting / Imputation / Anomaly Detection / Classification)",
+  "Model Architecture Category": "Transformer-based (Encoder-only) with inverted tokenization (variates-as-tokens)",
+  "Core Mechanism & Structure": "An encoder-only Transformer that inverts the usual time-token formulation: the input tensor [B, L, N] is permuted to [B, N, L] so each variable/channel becomes a token whose features are its whole history window. A per-variable linear embedding maps length-L histories (and optionally concatenated time-mark features) into d_model, then a stack of standard Transformer encoder layers (multi-head scaled dot-product FullAttention + position-wise 1x1 Conv feed-forward + residual + LayerNorm) performs global mixing across variables (token dimension). Task-specific linear heads project each variable token’s representation to either pred_len (forecasting) or seq_len (reconstruction tasks), with a special classification head that flattens all variable tokens and projects to num_class. For non-classification tasks, the model applies per-sample per-variable mean/variance normalization before encoding and reverses it after projection (Non-stationary Transformer-style normalization).",
+  "Core Innovations": "1) Inverted embedding/tokenization (DataEmbedding_inverted): treats each variate as a token and its temporal window as features, shifting self-attention to model inter-variable dependencies directly. 2) Simple Non-stationary normalization/de-normalization in forward paths (mean/std over time) to mitigate distribution shift and scale non-stationarity without introducing a separate module. 3) Unified encoder-only backbone with lightweight task heads (projection to pred_len/seq_len or flattened classification head), enabling multiple time-series tasks from the same representation.",
+  "Key Technical Details": {
+    "Input Embedding": "DataEmbedding_inverted: x is permuted from [B,L,N] to [B,N,L] and passed through nn.Linear(seq_len -> d_model). If x_mark is provided, it is permuted and concatenated along the token/channel axis before the same linear projection.",
+    "Feature Extraction": "Transformer Encoder stack: AttentionLayer wrapping FullAttention (scaled dot-product, multi-head), followed by 1x1 Conv feed-forward (Conv1d kernel=1) with GELU/ReLU, residual connections, dropout, and LayerNorm. Attention is global across tokens (here: variables).",
+    "Positional Encoding": "No positional encoding used in the instantiated model path (DataEmbedding_inverted has no positional/temporal embedding components).",
+    "Non-stationarity Handling": "Explicit per-sample normalization over the time dimension: subtract mean over dim=1, divide by std over dim=1 (with epsilon), then de-normalize outputs by multiplying std and adding mean (for forecast/imputation/anomaly_detection paths)."
+  },
+  "Evidence": {
+    "Direct Observations": [
+      {
+        "claim": "Encoder-only Transformer backbone (no Transformer decoder used) with task-specific linear projection heads",
+        "evidence": "models/iTransformer.py: self.encoder = Encoder([...EncoderLayer(AttentionLayer(FullAttention(...)))...]); no Decoder instantiation; heads: self.projection = nn.Linear(d_model, pred_len/seq_len) and for classification self.projection = nn.Linear(d_model * enc_in, num_class)."
+      },
+      {
+        "claim": "Inverted embedding makes variables the token dimension by permuting x to [B, N, L] and embedding with a Linear layer",
+        "evidence": "layers/Embed.py DataEmbedding_inverted.forward: x = x.permute(0, 2, 1); self.value_embedding = nn.Linear(c_in, d_model) where c_in is configs.seq_len in models/iTransformer.py."
+      },
+      {
+        "claim": "Uses FullAttention (scaled dot-product) inside a multi-head AttentionLayer",
+        "evidence": "models/iTransformer.py: AttentionLayer(FullAttention(False, configs.factor, ...), configs.d_model, configs.n_heads); layers/SelfAttention_Family.py FullAttention.forward uses scores = torch.einsum('blhe,bshe->bhls', ...) and softmax."
+      },
+      {
+        "claim": "Non-stationary normalization/de-normalization is applied for forecast, imputation, and anomaly_detection",
+        "evidence": "models/iTransformer.py: in forecast/imputation/anomaly_detection, means = x_enc.mean(1,...); stdev = sqrt(var(...)+1e-5); x_enc normalized; after projection dec_out is scaled by stdev and shifted by means."
+      },
+      {
+        "claim": "Task routing supports forecasting, imputation, anomaly detection, and classification",
+        "evidence": "models/iTransformer.py forward(): branches on task_name for 'long_term_forecast'/'short_term_forecast', 'imputation', 'anomaly_detection', 'classification'."
+      },
+      {
+        "claim": "No positional embedding is used in the executed embedding path",
+        "evidence": "models/iTransformer.py uses DataEmbedding_inverted; layers/Embed.py DataEmbedding_inverted defines only nn.Linear + dropout and does not add PositionalEmbedding."
+      },
+      {
+        "claim": "Encoder layer feed-forward is implemented via 1x1 Conv1d layers (pointwise convolution) with activation and dropout",
+        "evidence": "layers/Transformer_EncDec.py EncoderLayer: conv1 = nn.Conv1d(d_model, d_ff, kernel_size=1), conv2 = nn.Conv1d(d_ff, d_model, kernel_size=1); activation = relu/gelu."
+      }
+    ],
+    "Unknown / Not in Code": [
+      "Any explicit RevIN module usage (no RevIN class referenced/imported in the provided files).",
+      "Any learned or relative positional encoding used by the instantiated model (the chosen embedding omits it).",
+      "Any actual use of DSAttention / ProbAttention / AutoCorrelation / Fourier attention blocks in this model (they exist in layers/SelfAttention_Family.py but are not instantiated in models/iTransformer.py)."
+    ]
+  },
+  "Inferred Suitability": {
+    "Strengths": [
+      {
+        "label": "Efficient long-horizon forecasting when the number of variables is moderate",
+        "why": "Attention operates over N tokens (variables) rather than L time steps due to inverted tokenization, reducing attention cost from O(L^2) to O(N^2) per layer (with L absorbed into the embedding projection).",
+        "conditions": "When N << L (e.g., tens/hundreds of variables with sequence lengths in the thousands).",
+        "confidence": "high"
+      },
+      {
+        "label": "Strong multivariate dependency modeling (cross-variable interactions)",
+        "why": "Self-attention is applied directly across variable tokens, enabling global mixing among channels at every layer.",
+        "conditions": "When cross-sensor/feature correlations drive the target behavior (multivariate datasets).",
+        "confidence": "high"
+      },
+      {
+        "label": "Robustness to scale shifts and mean drift",
+        "why": "Per-sample mean/std normalization over time with symmetric de-normalization reduces non-stationarity effects.",
+        "conditions": "When series exhibit varying levels/scales across windows but are roughly affine-correctable (mean/variance changes).",
+        "confidence": "medium"
+      }
+    ],
+    "Weaknesses": [
+      {
+        "label": "Limited explicit temporal inductive bias",
+        "why": "The instantiated embedding path has no positional encoding and attention is not performed over time steps; temporal order is only implicit in the linear projection of the whole history window.",
+        "conditions": "When fine-grained temporal order, local patterns, or phase shifts are crucial and cannot be captured well by a single linear history embedding.",
+        "confidence": "high"
+      },
+      {
+        "label": "Scaling issues with very high-dimensional multivariate inputs",
+        "why": "Attention complexity becomes O(N^2) across variables; if N is very large (e.g., thousands), attention becomes expensive.",
+        "conditions": "When N is large (hundreds to thousands of channels) even if L is moderate.",
+        "confidence": "high"
+      },
+      {
+        "label": "Potential underuse of time-mark features in the inverted embedding",
+        "why": "x_mark is concatenated along the token/channel dimension before a single Linear(seq_len->d_model); there is no dedicated temporal embedding module in DataEmbedding_inverted, so time features are not added in a structured way.",
+        "conditions": "When calendar/time covariates are essential and need dedicated embedding (e.g., strong seasonality keyed by hour/day/month).",
+        "confidence": "medium"
+      }
+    ]
+  },
+  "Resource Requirements & Complexity": "Let B=batch size, L=seq_len, N=number of variables (enc_in), D=d_model, H=n_heads, and d_ff the FFN width. The dominant attention cost per layer is O(B * N^2 * D) (since tokens are variables). The embedding projection costs O(B * N * L * D) via nn.Linear(L->D) applied per variable token. FFN costs O(B * N * D * d_ff). Memory for attention maps scales as O(B * H * N^2) if attention weights are materialized (though output_attention=False in the instantiated FullAttention, the softmax activations still scale similarly internally). Parameter count is typical Transformer encoder: per layer ~O(D^2) from QKV/out projections plus O(D*d_ff) from FFN, plus the embedding Linear(L->D).",
+  "Paper Link": "https://arxiv.org/abs/2310.06625",
+  "_source_files": [
+    "models/iTransformer.py",
+    "layers/Transformer_EncDec.py",
+    "layers/SelfAttention_Family.py",
+    "layers/Embed.py"
+  ]
+}

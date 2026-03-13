@@ -1,0 +1,108 @@
+{
+  "model_name": "Informer",
+  "Primary Task Type": "Time-series Forecasting (Long-term and Short-term); also supports Imputation / Anomaly Detection / Classification",
+  "Model Architecture Category": "Transformer-based (Encoder–Decoder) with probabilistic sparse attention (Informer-style) and optional convolutional distillation",
+  "Core Mechanism & Structure": "An Informer-style sequence-to-sequence Transformer for multivariate time series. Inputs are embedded via a convolutional token/value embedding plus additive sinusoidal positional encoding and optional temporal feature embedding. The encoder is a stack of EncoderLayers using multi-head AttentionLayer wrapping ProbAttention (approximate sparse attention) followed by a position-wise feed-forward implemented as 1x1 Conv1d projections (d_model→d_ff→d_model) with residual connections and LayerNorm. For forecasting tasks, the encoder may insert ConvLayer blocks (Conv1d + BN + ELU + MaxPool) between attention layers when distillation is enabled to downsample/compact long sequences. The decoder is a stack of DecoderLayers using causal ProbAttention for self-attention and non-causal ProbAttention for cross-attention to encoder outputs, followed by the same Conv-FFN pattern and final linear projection to output channels. The same encoder backbone is reused for imputation and anomaly detection (encoder-only + linear head) and for classification (encoder-only, GELU + dropout, masking with x_mark_enc, flatten, linear classifier).",
+  "Core Innovations": "1) ProbAttention-based sparse attention to reduce attention cost versus full O(L^2) attention (Informer philosophy) while retaining global dependency modeling. 2) Optional 'distillation' via interleaved convolution + pooling (ConvLayer) in the encoder to shorten sequence length and improve efficiency on long-horizon forecasting. 3) Multi-task reuse of a single transformer backbone with task-specific heads (seq2seq for forecasting; encoder-only heads for imputation/anomaly/classification), plus a simple per-sample normalization/de-normalization path for short-term forecasting.",
+  "Key Technical Details": {
+    "Input Embedding": "DataEmbedding: TokenEmbedding (Conv1d over time with circular padding, kernel_size=3) + PositionalEmbedding (fixed sinusoidal) + TemporalEmbedding (fixed/learnable categorical time parts) or TimeFeatureEmbedding (linear projection of continuous time features when embed_type='timeF'), followed by dropout. Decoder uses the same embedding type.",
+    "Feature Extraction": "Encoder: stacked ProbAttention-based multi-head self-attention (via AttentionLayer) + Conv1d-based FFN (1x1 convs) with residuals and LayerNorm. Optional ConvLayer distillation blocks (Conv1d+BN+ELU+MaxPool) inserted between encoder layers for forecasting when configs.distil is true. Decoder: causal ProbAttention self-attention + cross-attention (ProbAttention without causal masking) + Conv1d FFN + LayerNorm, ending with linear projection to c_out.",
+    "Positional Encoding": "Absolute fixed sinusoidal positional encoding via PositionalEmbedding added in DataEmbedding (and thus used by default in this model).",
+    "Non-stationarity Handling": "No explicit RevIN/series decomposition. Short-term forecasting path applies per-sample normalization (subtract mean over time and divide by std over time) and de-normalizes outputs afterward; other tasks do not apply this normalization in forward."
+  },
+  "Evidence": {
+    "Direct Observations": [
+      {
+        "claim": "Uses an Informer-style encoder–decoder Transformer with ProbAttention",
+        "evidence": "models/Informer.py: EncoderLayer(AttentionLayer(ProbAttention(...))) for encoder; DecoderLayer uses two AttentionLayer(ProbAttention(...)) for self- and cross-attention."
+      },
+      {
+        "claim": "ProbAttention implements sampled top-k query sparse attention",
+        "evidence": "layers/SelfAttention_Family.py: class ProbAttention with _prob_QK sampling, topk selection (M_top), and context update; forward computes U_part/u based on factor*log(L)."
+      },
+      {
+        "claim": "Input embedding is Conv1d token embedding + sinusoidal positional embedding + temporal/time-feature embedding",
+        "evidence": "layers/Embed.py: DataEmbedding = TokenEmbedding + TemporalEmbedding/TimeFeatureEmbedding + PositionalEmbedding; TokenEmbedding is nn.Conv1d(kernel_size=3, padding_mode='circular'); PositionalEmbedding builds sin/cos table."
+      },
+      {
+        "claim": "Encoder feed-forward uses 1x1 Conv1d layers (conv1/conv2) instead of Linear",
+        "evidence": "layers/Transformer_EncDec.py: EncoderLayer.conv1 = nn.Conv1d(d_model, d_ff, kernel_size=1); conv2 = nn.Conv1d(d_ff, d_model, kernel_size=1)."
+      },
+      {
+        "claim": "Optional encoder distillation/downsampling via ConvLayer when configs.distil and forecasting task",
+        "evidence": "models/Informer.py: conv_layers=[ConvLayer(d_model) for ...] if configs.distil and ('forecast' in configs.task_name) else None; layers/Transformer_EncDec.py: ConvLayer has Conv1d+BatchNorm+ELU+MaxPool(stride=2)."
+      },
+      {
+        "claim": "Short-term forecasting applies explicit mean/std normalization and de-normalization",
+        "evidence": "models/Informer.py: short_forecast() computes mean_enc=x_enc.mean(1), std_enc=sqrt(var(...)+1e-5), normalizes x_enc, then dec_out = dec_out*std_enc + mean_enc."
+      },
+      {
+        "claim": "Supports multiple tasks with different heads: forecasting, imputation, anomaly detection, classification",
+        "evidence": "models/Informer.py: task_name branches in __init__ and forward(); imputation/anomaly use self.projection(enc_out); classification flattens encoder output and projects to num_class."
+      },
+      {
+        "claim": "Classification uses padding mask provided by x_mark_enc to zero out embeddings before flattening",
+        "evidence": "models/Informer.py: output = output * x_mark_enc.unsqueeze(-1)  # zero-out padding embeddings."
+      },
+      {
+        "claim": "Paper link is explicitly referenced in the model docstring",
+        "evidence": "models/Informer.py docstring: 'Paper link: https://ojs.aaai.org/index.php/AAAI/article/view/17325/17132'."
+      }
+    ],
+    "Unknown / Not in Code": [
+      "RevIN or other explicit reversible normalization modules are not present in the provided files.",
+      "Series decomposition blocks (trend/seasonal) are not used in models/Informer.py.",
+      "FourierBlock/FourierCrossAttention/AutoCorrelation/TwoStageAttentionLayer are defined in layers/SelfAttention_Family.py but are not instantiated by models/Informer.py."
+    ]
+  },
+  "Inferred Suitability": {
+    "Strengths": [
+      {
+        "label": "Long-sequence efficiency vs full attention",
+        "why": "ProbAttention reduces attention computation by sampling keys and selecting top queries (factor * log L), avoiding full LxL score computation for all queries.",
+        "conditions": "When sequence length is large (e.g., hundreds to thousands) and full attention would be prohibitively slow/memory-heavy.",
+        "confidence": "high"
+      },
+      {
+        "label": "Good fit for covariate-rich forecasting",
+        "why": "DataEmbedding can incorporate temporal/categorical calendar features (hour/weekday/day/month/minute) or continuous time features via TimeFeatureEmbedding, aiding seasonal/periodic patterns.",
+        "conditions": "When timestamps or engineered time features (x_mark) are available and informative (electricity/traffic/weather).",
+        "confidence": "high"
+      },
+      {
+        "label": "Scalable encoder representation via distillation",
+        "why": "Optional ConvLayer downsampling (stride-2 pooling) compresses sequence length between attention blocks, which can improve speed and potentially regularize long-range modeling.",
+        "conditions": "When configs.distil=True and forecasting tasks are used; especially beneficial for very long contexts.",
+        "confidence": "medium"
+      }
+    ],
+    "Weaknesses": [
+      {
+        "label": "Approximate attention may miss fine-grained dependencies",
+        "why": "ProbAttention updates context only for selected top-k queries and uses an approximate context initialization for others, which can underrepresent subtle short-term interactions.",
+        "conditions": "When accurate local/high-frequency dependencies are critical (noisy signals, sharp regime changes) or when L is not large enough to justify approximation.",
+        "confidence": "medium"
+      },
+      {
+        "label": "Limited explicit non-stationarity handling",
+        "why": "No RevIN/learned de-stationary factors are used in this model; only short_term_forecast applies simple mean/std normalization, while long_term_forecast does not.",
+        "conditions": "When dataset exhibits strong distribution shift, varying scale across time/series, or changing variance; especially for long-horizon forecasting without per-sample normalization.",
+        "confidence": "high"
+      },
+      {
+        "label": "Classification head is parameter- and memory-heavy for long sequences",
+        "why": "Flattens encoder output to size (d_model * seq_len) before a linear layer, scaling parameters and compute linearly with seq_len.",
+        "conditions": "When seq_len is large and d_model is moderate/large; may overfit or be expensive compared to pooling-based classifiers.",
+        "confidence": "high"
+      }
+    ]
+  },
+  "Resource Requirements & Complexity": "Parameters scale roughly with O((e_layers + d_layers) * (d_model^2 + d_model*d_ff)) plus embedding conv and output projections. ProbAttention reduces attention complexity from O(L^2) to approximately O(L log L) (sampling and top-k query selection), though it still incurs nontrivial constants and some O(L) context operations. If distillation is enabled, encoder sequence length shrinks via pooling (approximately halving per ConvLayer), reducing downstream attention cost. Memory is dominated by activations across layers and attention intermediate tensors; significantly lower than full attention for large L, but still sizable for deep stacks or large d_model/n_heads.",
+  "Paper Link": "https://ojs.aaai.org/index.php/AAAI/article/view/17325/17132",
+  "_source_files": [
+    "models/Informer.py",
+    "layers/Transformer_EncDec.py",
+    "layers/SelfAttention_Family.py",
+    "layers/Embed.py"
+  ]
+}

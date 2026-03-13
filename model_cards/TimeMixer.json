@@ -1,0 +1,116 @@
+{
+  "model_name": "TimeMixer",
+  "Primary Task Type": "Multitask Time Series Modeling (primarily Forecasting; also Imputation / Anomaly Detection / Classification)",
+  "Model Architecture Category": "MLP-based multi-scale decomposition & mixing (no Transformer attention in the main model)",
+  "Core Mechanism & Structure": "A multi-resolution encoder-only architecture that (1) builds a pyramid of downsampled input sequences, (2) embeds each scale with convolutional token embedding plus optional temporal features (no positional encoding), (3) repeatedly applies PastDecomposableMixing blocks that decompose each scale into seasonal/trend components (moving-average or FFT-based) and mix them across scales via bottom-up season aggregation and top-down trend aggregation using per-scale Linear layers, and (4) produces forecasts by applying per-scale temporal Linear predictors to encoder outputs and summing scale-wise predictions; for non-channel-independent mode, an explicit residual path from pre-decomposed inputs is projected and added to the prediction. For anomaly detection and imputation it reconstructs the input length via a projection head; for classification it flattens the encoded sequence and applies a linear classifier.",
+  "Core Innovations": "1) Multi-scale seasonal/trend mixing: explicit decomposition at each scale followed by asymmetric cross-scale mixing (season: high->low; trend: low->high) implemented with learned Linear up/down projections. 2) Encoder-as-decomposition-mixer instead of attention: stacked PastDecomposableMixing blocks replace self-attention, targeting long sequences with O(L) per-layer mixing along time. 3) Optional channel-independence mode: reshapes (B,T,C)->(B*C,T,1) so each variable is modeled separately, reducing cross-channel entanglement; the multivariate mode instead adds cross-channel MLPs plus residual regression heads.",
+  "Key Technical Details": {
+    "Input Embedding": "DataEmbedding_wo_pos: TokenEmbedding is a 1D circular Conv (kernel=3) mapping input channels to d_model; optionally adds TemporalEmbedding/TimeFeatureEmbedding from x_mark; no positional embedding term is added in forward().",
+    "Feature Extraction": "PastDecomposableMixing: per-scale series decomposition (moving average or FFT top-k) -> optional cross-channel 2-layer MLP (d_model->d_ff->d_model) -> MultiScaleSeasonMixing (downsample Linear projections applied to seasonal components, high->low) and MultiScaleTrendMixing (upsample Linear projections applied to trend components, low->high) -> recombine season+trend and residual MLP.",
+    "Positional Encoding": "No positional encoding in the actual model path (uses DataEmbedding_wo_pos which omits positional embedding in forward).",
+    "Non-stationarity Handling": "Per-scale reversible-style normalization via layers/StandardNorm.Normalize with norm/denorm calls around the model; plus explicit series decomposition (moving average or FFT) to separate trend/seasonal components. Imputation additionally applies manual mean/std normalization using the mask and then re-scales outputs."
+  },
+  "Evidence": {
+    "Direct Observations": [
+      {
+        "claim": "Main model is multi-scale and does downsampling to create a list of sequences at different temporal resolutions.",
+        "evidence": "models/TimeMixer.py::Model.__multi_scale_process_inputs builds x_enc_sampling_list using MaxPool1d/AvgPool1d/Conv1d with stride=down_sampling_window for down_sampling_layers and returns lists of x_enc and x_mark_enc per scale."
+      },
+      {
+        "claim": "Embedding uses convolutional token embedding and optional temporal features, and explicitly does not add positional encoding.",
+        "evidence": "layers/Embed.py::DataEmbedding_wo_pos.forward: if x_mark is None: x = value_embedding(x); else x = value_embedding(x)+temporal_embedding(x_mark). No position_embedding term. Model uses self.enc_embedding = DataEmbedding_wo_pos(...) in models/TimeMixer.py::Model.__init__."
+      },
+      {
+        "claim": "Encoder is a stack of PastDecomposableMixing blocks; no attention module is instantiated or called in Model.",
+        "evidence": "models/TimeMixer.py::Model.__init__: self.pdm_blocks = ModuleList([PastDecomposableMixing(configs) for _ in range(configs.e_layers)]); models/TimeMixer.py::forecast loops: for i in range(self.layer): enc_out_list = self.pdm_blocks[i](enc_out_list). No attention usage in this file."
+      },
+      {
+        "claim": "Each PastDecomposableMixing block decomposes each scale into seasonal and trend components using either moving average or FFT-based decomposition.",
+        "evidence": "models/TimeMixer.py::PastDecomposableMixing.__init__: if decomp_method=='moving_avg' uses layers/Autoformer_EncDec.series_decomp; elif 'dft_decomp' uses models/TimeMixer.py::DFT_series_decomp. PastDecomposableMixing.forward calls season,trend = self.decompsition(x)."
+      },
+      {
+        "claim": "Season components are mixed bottom-up (high->low) with learned Linear downsampling layers; trend components are mixed top-down (low->high) with learned Linear upsampling layers.",
+        "evidence": "models/TimeMixer.py::MultiScaleSeasonMixing.forward: out_low_res = down_sampling_layers[i](out_high); out_low = out_low + out_low_res (mix high->low). MultiScaleTrendMixing.forward: out_high_res = up_sampling_layers[i](out_low); out_high = out_high + out_high_res (mix low->high)."
+      },
+      {
+        "claim": "Forecast head is multi-scale: per-scale temporal Linear layers map from each scale's length to pred_len; predictions across scales are summed.",
+        "evidence": "models/TimeMixer.py::Model.__init__: predict_layers[i] = Linear(seq_len//(window**i), pred_len). models/TimeMixer.py::future_multi_mixing applies predict_layers[i] to enc_out.permute(0,2,1) and returns list; models/TimeMixer.py::forecast does torch.stack(dec_out_list, dim=-1).sum(-1)."
+      },
+      {
+        "claim": "Model includes reversible normalization with explicit norm/denorm calls (RevIN-like) implemented by Normalize in layers/StandardNorm.py.",
+        "evidence": "models/TimeMixer.py::forecast/anomaly_detection call self.normalize_layers[i](x,'norm') and after prediction call self.normalize_layers[0](dec_out,'denorm'). layers/StandardNorm.py::Normalize defines mode 'norm' and 'denorm' with stored mean/stdev and optional affine."
+      },
+      {
+        "claim": "Channel-independence mode reshapes (B,T,C) into (B*C,T,1) to model each channel separately.",
+        "evidence": "models/TimeMixer.py::forecast: if channel_independence: x = x.permute(0,2,1).reshape(B*N,T,1); enc_embedding constructed with c_in=1 in Model.__init__."
+      },
+      {
+        "claim": "Supports multiple tasks via task_name branching: forecasting, imputation, anomaly_detection, classification.",
+        "evidence": "models/TimeMixer.py::Model.forward branches on task_name; separate methods forecast(), imputation(), anomaly_detection(), classification()."
+      },
+      {
+        "claim": "Imputation uses mask-based mean/std normalization outside Normalize, then re-scales outputs back.",
+        "evidence": "models/TimeMixer.py::imputation computes means = sum(x_enc)/sum(mask==1), stdev similarly, normalizes x_enc, later rescales dec_out by stdev and means before returning."
+      },
+      {
+        "claim": "Autoformer attention encoder/decoder modules exist in the repository but are not used by TimeMixer.Model.",
+        "evidence": "layers/Autoformer_EncDec.py defines EncoderLayer/DecoderLayer/Encoder/Decoder using attention argument; models/TimeMixer.py imports only series_decomp from this file and never instantiates Encoder/Decoder/EncoderLayer/DecoderLayer."
+      }
+    ],
+    "Unknown / Not in Code": [
+      "Any explicit self-attention / cross-attention mechanism inside TimeMixer.Model (none is constructed or called in models/TimeMixer.py).",
+      "Patch-based processing (PatchEmbedding exists in layers/Embed.py but TimeMixer.Model uses DataEmbedding_wo_pos, not PatchEmbedding).",
+      "A paper URL or citation string (no link present in provided code)."
+    ]
+  },
+  "Inferred Suitability": {
+    "Strengths": [
+      {
+        "label": "Long-sequence efficiency",
+        "why": "No quadratic attention; mixing uses Conv1d embedding plus Linear projections and decomposition, so per-layer cost scales roughly linearly with sequence length (and reduced further at lower scales).",
+        "conditions": "When seq_len is large (e.g., > 1k) and attention-based baselines become memory/time bottlenecks",
+        "confidence": "high"
+      },
+      {
+        "label": "Strong inductive bias for trend/seasonality",
+        "why": "Explicit series decomposition (moving average or FFT top-k) plus separate cross-scale mixing for season vs trend encourages structured modeling of periodicity and slowly-varying components.",
+        "conditions": "When data exhibits clear trend + seasonal patterns (energy/load/traffic, many economic series)",
+        "confidence": "high"
+      },
+      {
+        "label": "Robustness to non-stationarity via normalization + decomposition",
+        "why": "Per-scale Normalize(norm/denorm) plus decomposition reduces scale/shift issues and isolates components.",
+        "conditions": "When series have varying mean/variance across samples or regimes; distribution shift between instances",
+        "confidence": "medium"
+      }
+    ],
+    "Weaknesses": [
+      {
+        "label": "Limited modeling of complex cross-variable dependencies (especially in channel_independence mode)",
+        "why": "Channel independence reshapes each variable to (B*C,T,1), removing interaction modeling; even in multivariate mode, cross-channel interaction is via shallow MLPs rather than explicit dependency modeling.",
+        "conditions": "When forecasting requires strong multivariate coupling (e.g., causal interactions across sensors/markets)",
+        "confidence": "high"
+      },
+      {
+        "label": "Potential loss of fine-grained temporal detail due to downsampling and linear length-mapping",
+        "why": "Downsampled scales are pooled/strided; prediction uses Linear(seq_len_i -> pred_len) which can behave like global temporal mixing and may underfit sharp events.",
+        "conditions": "When signals contain abrupt spikes, localized anomalies, or high-frequency dynamics critical for prediction",
+        "confidence": "medium"
+      },
+      {
+        "label": "FFT decomposition may be brittle for non-periodic or time-varying frequency content",
+        "why": "DFT_series_decomp keeps only top-k frequencies globally, which can miss transient periodicities or nonstationary spectra.",
+        "conditions": "When periodicities drift over time or signals are dominated by transients rather than stable harmonics",
+        "confidence": "medium"
+      }
+    ]
+  },
+  "Resource Requirements & Complexity": "Compute is dominated by (a) Conv1d token embedding O(B*T*d_model) per scale, (b) decomposition: moving average uses AvgPool1d O(B*T*C); FFT option uses rfft/irfft O(B*T*log T) per scale, and (c) per-scale Linear mappings along the time dimension inside mixing/predict layers: roughly O(B*d_model*T_i*T_{i+1}) for each down/up sampling Linear (since it is a full Linear over time-length), plus O(B*T_i*d_model*d_ff) for cross-layer MLPs. Memory is linear in total tokens across scales plus activations of MLPs; no O(T^2) attention matrix. Parameter count grows with number of scales (down_sampling_layers) due to multiple time-length Linear layers and multiple predict/regression heads.",
+  "Paper Link": "None",
+  "_source_files": [
+    "models/TimeMixer.py",
+    "layers/Autoformer_EncDec.py",
+    "layers/Embed.py",
+    "layers/StandardNorm.py"
+  ]
+}

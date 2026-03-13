@@ -1,0 +1,98 @@
+{
+  "model_name": "DLinear",
+  "Primary Task Type": "Time-series forecasting (long/short-term) with optional imputation, anomaly detection, and classification modes",
+  "Model Architecture Category": "Decomposition + Linear (MLP/Linear) time-series model (DLinear-style), not Transformer-based in this implementation",
+  "Core Mechanism & Structure": "The model applies an explicit time-series decomposition into seasonal (residual) and trend components via a moving-average filter (Autoformer-style series_decomp). Each component is then mapped from input length (seq_len) to output length (pred_len) using simple linear projections (either shared across variables or per-variable/individual). The final output is the elementwise sum of the seasonal and trend linear outputs, reshaped back to [B, pred_len, D]. For classification, the predicted sequence is flattened and passed through a linear classifier.",
+  "Core Innovations": "1) Explicit trend/seasonal decomposition prior to modeling (moving-average based), then learning separate linear mappings per component. 2) Extremely lightweight forecasting head: direct seq_len→pred_len linear projection (initialized as uniform averaging), which acts like a learnable filterbank over time. 3) Optional per-channel (individual) parameterization, allowing each variable to have its own seasonal/trend linear mapper when cross-variable sharing is undesirable.",
+  "Key Technical Details": {
+    "Input Embedding": "No learned embedding layer; raw input x_enc is directly decomposed and then permuted to [B, C, L] for linear layers over the time dimension.",
+    "Feature Extraction": "No attention/convolutions used in the DLinear model path; feature extraction is via (a) moving-average decomposition and (b) linear projection over the temporal axis for seasonal and trend parts (either shared Linear or per-channel ModuleList of Linear).",
+    "Positional Encoding": "No positional encoding.",
+    "Non-stationarity Handling": "Explicit trend/seasonality separation using moving average (series_decomp) to reduce non-stationarity; additionally, linear layers are initialized to uniform averaging weights (1/seq_len), providing a stable starting point akin to smoothing."
+  },
+  "Evidence": {
+    "Direct Observations": [
+      {
+        "claim": "Uses moving-average based series decomposition (seasonal residual + trend) from Autoformer code",
+        "evidence": "models/DLinear.py: `from layers.Autoformer_EncDec import series_decomp` and `self.decompsition = series_decomp(configs.moving_avg)`; layers/Autoformer_EncDec.py defines `series_decomp` using `moving_avg` (AvgPool1d)."
+      },
+      {
+        "claim": "Forecasting/imputation/anomaly_detection all reuse the same encoder that outputs seq_len→pred_len via linear layers",
+        "evidence": "models/DLinear.py: `forecast`, `imputation`, `anomaly_detection` all return `self.encoder(x_enc)`; `encoder()` decomposes then applies `Linear_Seasonal` and `Linear_Trend` from seq_len to pred_len."
+      },
+      {
+        "claim": "Two separate linear projections are applied: one for seasonal component and one for trend component, then summed",
+        "evidence": "models/DLinear.py `self.Linear_Seasonal` and `self.Linear_Trend`; in `encoder`: `x = seasonal_output + trend_output`."
+      },
+      {
+        "claim": "Supports per-variable (individual) vs shared linear layers across channels",
+        "evidence": "models/DLinear.py: if `self.individual`: creates `nn.ModuleList()` of Linear layers for each channel; else uses shared `nn.Linear(self.seq_len, self.pred_len)`."
+      },
+      {
+        "claim": "Linear weights are explicitly initialized to uniform averaging (1/seq_len)",
+        "evidence": "models/DLinear.py: `self.Linear_Seasonal.weight = nn.Parameter((1 / self.seq_len) * torch.ones([self.pred_len, self.seq_len]))` (and similarly for trend), including per-channel case."
+      },
+      {
+        "claim": "Classification mode flattens encoder output and applies a linear projection to num_class",
+        "evidence": "models/DLinear.py: `self.projection = nn.Linear(configs.enc_in * configs.seq_len, configs.num_class)`; `output = enc_out.reshape(enc_out.shape[0], -1)`; `output = self.projection(output)`."
+      },
+      {
+        "claim": "The provided Autoformer_EncDec module contains attention-based Encoder/Decoder layers (Autoformer progressive decomposition), but they are not used by this DLinear model file",
+        "evidence": "layers/Autoformer_EncDec.py defines `EncoderLayer`, `Encoder`, `DecoderLayer`, `Decoder` using `attention` modules and progressive `series_decomp`; models/DLinear.py only imports and uses `series_decomp`."
+      }
+    ],
+    "Unknown / Not in Code": [
+      "No RevIN / instance normalization module is present or referenced.",
+      "No explicit temporal/covariate embedding uses `x_mark_enc`/`x_mark_dec`; these arguments are accepted in `forward` but unused.",
+      "No Transformer attention mechanism is implemented/used in models/DLinear.py."
+    ]
+  },
+  "Inferred Suitability": {
+    "Strengths": [
+      {
+        "label": "Fast and memory-efficient long-horizon baseline",
+        "why": "Core compute is O(B*C*seq_len*pred_len) from linear projections plus O(B*C*seq_len) moving average; no O(L^2) attention",
+        "conditions": "When sequence lengths are large and a strong lightweight baseline is needed (especially compared to attention-based models)",
+        "confidence": "high"
+      },
+      {
+        "label": "Robustness on series with strong trend/seasonality structure",
+        "why": "Explicit decomposition isolates trend via moving average and models trend/seasonal parts separately",
+        "conditions": "When the dataset exhibits smooth trend + residual seasonal/short-term fluctuations that a moving average can separate",
+        "confidence": "high"
+      },
+      {
+        "label": "Good performance with limited data / reduced overfitting risk",
+        "why": "Very small hypothesis class (mostly linear) and sensible initialization to averaging filters",
+        "conditions": "When training data is limited or noise is high and complex deep models overfit",
+        "confidence": "medium"
+      }
+    ],
+    "Weaknesses": [
+      {
+        "label": "Limited nonlinear modeling capacity",
+        "why": "After decomposition, the mapping is purely linear over time; no nonlinear temporal mixing beyond decomposition",
+        "conditions": "When the target depends on nonlinear dynamics, regime switches, or complex interactions not captured by a linear filter",
+        "confidence": "high"
+      },
+      {
+        "label": "Decomposition depends on fixed moving-average kernel",
+        "why": "Trend extraction uses AvgPool1d with kernel size `configs.moving_avg`; an ill-suited kernel can under/over-smooth trend",
+        "conditions": "When the characteristic trend scale varies widely across samples/series or is not well represented by a single kernel size",
+        "confidence": "medium"
+      },
+      {
+        "label": "Underutilization of known covariates/time features",
+        "why": "`x_mark_enc` and `x_mark_dec` are not used, so calendar/time covariates cannot be incorporated",
+        "conditions": "When exogenous/time features (e.g., hour-of-day, holidays) are important for accuracy",
+        "confidence": "high"
+      }
+    ]
+  },
+  "Resource Requirements & Complexity": "Parameters: if shared (`individual=False`): two Linear layers of size (pred_len×seq_len) each, so ~2*pred_len*seq_len (+bias) parameters, plus optional classification head of size (enc_in*seq_len×num_class). If individual (`individual=True`): parameters scale by channels: ~2*enc_in*pred_len*seq_len. Compute per forward: moving average via AvgPool1d O(B*enc_in*seq_len) and linear projections O(B*enc_in*pred_len*seq_len). Memory is low; no attention maps.",
+  "Paper Link": "https://arxiv.org/pdf/2205.13504.pdf",
+  "_source_files": [
+    "models/DLinear.py",
+    "layers/Autoformer_EncDec.py"
+  ]
+}
