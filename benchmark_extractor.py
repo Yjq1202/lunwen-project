@@ -1,8 +1,8 @@
 import json
-import re
+import os
 from pathlib import Path
-from openai import OpenAI
 from dotenv import load_dotenv
+from llm_router import chat_completion_with_fallback
 
 # Load environment variables
 load_dotenv()
@@ -11,10 +11,9 @@ load_dotenv()
 # Path to the local LaTeX file
 PAPER_PATH = Path("arXiv-2403.20150v4/main.tex")
 OUTPUT_FILE = Path("benchmark_data.json")
-# Using a capable model for processing large context and complex reasoning
-MODEL_NAME = "gpt-4o" 
+# 使用环境变量覆盖；为空则走 llm_router 默认模型
+MODEL_NAME = os.getenv("BENCHMARK_EXTRACTOR_MODEL", "")
 
-client = OpenAI()
 
 # ========= 🛠️ Utility Functions =========
 
@@ -98,14 +97,14 @@ E) Digest / Priors
 """
 
     try:
-        resp = client.chat.completions.create(
-            model=MODEL_NAME,
+        resp, _, _ = chat_completion_with_fallback(
+            model_override=MODEL_NAME or None,
             messages=[
                 {"role": "system", "content": "You are a rigorous research assistant who extracts structured data from scientific papers. You output strict JSON."},
                 {"role": "user", "content": prompt}
             ],
-            response_format={"type": "json_object"},
-            temperature=0.1 # Low temperature for precision
+            response_json=True,
+            extra_kwargs={"temperature": 0.1},  # Low temperature for precision
         )
         return json.loads(resp.choices[0].message.content)
     except Exception as e:
@@ -133,7 +132,7 @@ def main():
         print(f"✅ Benchmark data extracted and saved to: {OUTPUT_FILE}")
         
         # Validation check
-        if "mts_results" in data.get("tfb_raw_tables", {{}}):
+        if "mts_results" in data.get("tfb_raw_tables", {}):
             dataset_count = len(data["tfb_raw_tables"]["mts_results"])
             print(f"📊 Extracted results for {dataset_count} datasets.")
         else:

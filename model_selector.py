@@ -1,10 +1,10 @@
 import json
-import concurrent.futures
+import os
 import pandas as pd
 import argparse
 from pathlib import Path
-from openai import OpenAI
 from dotenv import load_dotenv
+from llm_router import chat_completion_with_fallback
 
 load_dotenv()
 
@@ -15,12 +15,12 @@ OUTPUT_DIR = Path("recommendation_results")
 
 # 默认路径定义
 DEFAULT_JSON_PATH = Path("benchmark_data.json")
-DEFAULT_TEX_PATH = Path("/Users/hpy/Desktop/LLM4TSGym/arXiv-2403.20150v4/main.tex")
+DEFAULT_TEX_PATH = Path("arXiv-2403.20150v4/main.tex")
 
-MODEL_NAME = "gpt-5.2"
+MODEL_NAME = os.getenv("MODEL_SELECTOR_MODEL", "")
+
 USE_BENCHMARK_CONTEXT = True  # Control whether to add benchmark info to prompt
 
-client = OpenAI()
 
 def load_json_files(directory):
     data = {}
@@ -30,6 +30,17 @@ def load_json_files(directory):
     for f in sorted(directory.glob("*.json")):
         try:
             content = json.loads(f.read_text(encoding="utf-8"))
+
+            # 对模型卡做轻量标准化：优先保留“双证据一致”结论，提升推荐客观性
+            if isinstance(content, dict):
+                final_claims = content.get("final_claims", {})
+                if isinstance(final_claims, dict):
+                    content["objective_capabilities"] = {
+                        "supported_by_both": final_claims.get("supported_by_both", []),
+                        "code_only": final_claims.get("code_only", []),
+                        "paper_only": final_claims.get("paper_only", [])
+                    }
+
             # 使用文件名(不含后缀)作为 Key
             key = f.stem 
             data[key] = content
@@ -59,12 +70,23 @@ def load_benchmark_data(file_path):
         print(f"⚠️ Failed to read benchmark file: {e}")
         return None
 
-def get_recommendations(dataset_name, dataset_info, all_models_summary, benchmark_data=None, use_benchmark_context=False, verbose=False):
+def get_recommendations(
+    dataset_name,
+    dataset_info,
+    all_models_summary,
+    benchmark_data=None,
+    use_benchmark_context=False,
+    verbose=False,
+    logic_memory=None,
+):
     """
     核心函数：将单个数据集特征 + 所有模型概览发给 LLM
     """
     if verbose:
         print(f"🤖 正在为数据集 [{dataset_name}] 筛选 Top-3 模型...")
+
+    if logic_memory is None:
+        logic_memory = []
 
     benchmark_context_str = ""
     if use_benchmark_context and benchmark_data:
@@ -128,6 +150,9 @@ Name: {dataset_name}
 2. **Candidate Model Library**:
 {json.dumps(all_models_summary, ensure_ascii=False, indent=2)}
 
+3. **Historical Recommendation Logic from Other Datasets (optional, newest last)**:
+{json.dumps(logic_memory[-5:], ensure_ascii=False, indent=2)}
+
 3. [Guidance on Benchmark Context]
 If [Benchmark Context] information is provided above, please utilize it as follows:
 - **General Characteristic Rules**: Use these heuristic rules to validate your analysis of dataset properties.
@@ -160,6 +185,7 @@ When generating JSON, please strictly follow this logical order to fill in the f
 3. **Step 3: Final Ranking and Conclusion**
    - **Recommendation List (recommendations)**: Select the 3 models with the highest comprehensive scores.
    - **Avoidance List (negative_recommendations)**: Select the 3 most unsuitable models (serious mechanism mismatch, high risk of overfitting/underfitting).
+   - Reference historical logic only as auxiliary experience. You MUST still adapt to this dataset's own characteristics and explain transferability.
 
 [Output Format]
 Must be output as a valid JSON object, structured as follows:
@@ -186,13 +212,13 @@ Must be output as a valid JSON object, structured as follows:
         print("-" * 40)
 
     try:
-        resp = client.chat.completions.create(
-            model=MODEL_NAME,
+        resp, _, _ = chat_completion_with_fallback(
+            model_override=MODEL_NAME or None,
+            response_json=True,
             messages=[
                 {"role": "system", "content": "You are a rigorous algorithm expert who only outputs JSON."},
                 {"role": "user", "content": prompt}
             ],
-            response_format={"type": "json_object"}
         )
         
         # Output token usage
@@ -216,8 +242,6 @@ def main():
     args = parser.parse_args()
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    NUM_ITERATIONS = 10
-    CONCURRENCY_LIMIT = 5
 
     # Determine Benchmark File
     if args.source == "tex":
@@ -255,100 +279,95 @@ def main():
     # 详细日志列表
     detailed_run_logs = []
 
-    # 4. 准备任务列表
-    tasks = []
-    for d_name, d_info in datasets_data.items():
-        for i in range(NUM_ITERATIONS):
-            tasks.append((d_name, d_info, i))
-    
-    total_tasks = len(tasks)
-    print(f"🚀 开始并发执行任务 (并发数: {CONCURRENCY_LIMIT}, 总任务数: {total_tasks}, Benchmark Context: {USE_BENCHMARK_CONTEXT})...")
+    # 4. 顺序执行（每个数据集运行1次，借鉴历史数据集推荐逻辑）
+    dataset_items = list(datasets_data.items())
+    total_tasks = len(dataset_items)
+    logic_memory = []
+    print(f"🚀 开始顺序执行任务 (总任务数: {total_tasks}, Benchmark Context: {USE_BENCHMARK_CONTEXT})...")
 
-    # 5. 并发执行
-    with concurrent.futures.ThreadPoolExecutor(max_workers=CONCURRENCY_LIMIT) as executor:
-        # 提交所有任务
-        # 注意：这里 verbose=False 以避免多线程打印混乱
-        future_to_task = {
-            executor.submit(get_recommendations, d_name, d_info, models_summary, benchmark_data, USE_BENCHMARK_CONTEXT, False): (d_name, i)
-            for d_name, d_info, i in tasks
-        }
-        
-        completed_count = 0
-        for future in concurrent.futures.as_completed(future_to_task):
-            d_name, i = future_to_task[future]
-            completed_count += 1
-            
-            try:
-                result = future.result()
-                if result and "recommendations" in result:
-                    print(f"[{completed_count}/{total_tasks}] ✅ {d_name} (Iter {i+1}) 完成")
-                    
-                    # 兼容旧代码逻辑，优先取 dataset_analysis，如果没有则尝试取 analysis
-                    analysis = result.get("dataset_analysis", result.get("analysis", ""))
-                    filtering_logic = result.get("candidate_filtering_logic", "")
-                    
-                    full_analysis = f"【数据分析】{analysis}\n【筛选逻辑】{filtering_logic}"
-                    
-                    # 处理【推荐】列表 (Positive)
-                    for item in result.get("recommendations", []):
-                        m_name = item.get("model_name", "")
-                        rank = item.get("rank", 0)
-                        reason = item.get("reason", "")
-                        
-                        target_key = None
-                        if m_name in matrix_pos.index:
-                            target_key = m_name
-                        else:
-                            for idx_name in matrix_pos.index:
-                                if idx_name.lower() == m_name.lower():
-                                    target_key = idx_name
-                                    break
-                        
-                        if target_key:
-                            matrix_pos.loc[target_key, d_name] += 1
-                            detailed_run_logs.append({
-                                "dataset": d_name,
-                                "iteration": i + 1,
-                                "type": "Recommended (Pos)",
-                                "rank": rank,
-                                "model_key": target_key,
-                                "model_name_raw": m_name,
-                                "reason": reason,
-                                "analysis": full_analysis
-                            })
+    for idx, (d_name, d_info) in enumerate(dataset_items, start=1):
+        try:
+            result = get_recommendations(
+                d_name,
+                d_info,
+                models_summary,
+                benchmark_data,
+                USE_BENCHMARK_CONTEXT,
+                False,
+                logic_memory,
+            )
+            if result and "recommendations" in result:
+                print(f"[{idx}/{total_tasks}] ✅ {d_name} 完成")
 
-                    # 处理【不推荐】列表 (Negative)
-                    for item in result.get("negative_recommendations", []):
-                        m_name = item.get("model_name", "")
-                        rank = item.get("rank", 0)
-                        reason = item.get("reason", "")
-                        
-                        target_key = None
-                        if m_name in matrix_neg.index:
-                            target_key = m_name
-                        else:
-                            for idx_name in matrix_neg.index:
-                                if idx_name.lower() == m_name.lower():
-                                    target_key = idx_name
-                                    break
-                        
-                        if target_key:
-                            matrix_neg.loc[target_key, d_name] += 1
-                            detailed_run_logs.append({
-                                "dataset": d_name,
-                                "iteration": i + 1,
-                                "type": "Avoid (Neg)",
-                                "rank": rank,
-                                "model_key": target_key,
-                                "model_name_raw": m_name,
-                                "reason": reason,
-                                "analysis": full_analysis
-                            })
+                analysis = result.get("dataset_analysis", result.get("analysis", ""))
+                filtering_logic = result.get("candidate_filtering_logic", "")
+                full_analysis = f"【数据分析】{analysis}\n【筛选逻辑】{filtering_logic}"
 
-                else:
-                    print(f"[{completed_count}/{total_tasks}] ⚠️ {d_name} (Iter {i+1}) 无有效结果/失败")
-            except Exception as exc:
-                print(f"[{completed_count}/{total_tasks}] ❌ {d_name} (Iter {i+1}) 异常: {exc}")
+                logic_memory.append({
+                    "dataset": d_name,
+                    "dataset_analysis": analysis,
+                    "candidate_filtering_logic": filtering_logic,
+                    "recommendations": result.get("recommendations", []),
+                    "negative_recommendations": result.get("negative_recommendations", []),
+                })
+
+                for item in result.get("recommendations", []):
+                    m_name = item.get("model_name", "")
+                    rank = item.get("rank", 0)
+                    reason = item.get("reason", "")
+
+                    target_key = None
+                    if m_name in matrix_pos.index:
+                        target_key = m_name
+                    else:
+                        for idx_name in matrix_pos.index:
+                            if idx_name.lower() == m_name.lower():
+                                target_key = idx_name
+                                break
+
+                    if target_key:
+                        matrix_pos.loc[target_key, d_name] += 1
+                        detailed_run_logs.append({
+                            "dataset": d_name,
+                            "iteration": 1,
+                            "type": "Recommended (Pos)",
+                            "rank": rank,
+                            "model_key": target_key,
+                            "model_name_raw": m_name,
+                            "reason": reason,
+                            "analysis": full_analysis
+                        })
+
+                for item in result.get("negative_recommendations", []):
+                    m_name = item.get("model_name", "")
+                    rank = item.get("rank", 0)
+                    reason = item.get("reason", "")
+
+                    target_key = None
+                    if m_name in matrix_neg.index:
+                        target_key = m_name
+                    else:
+                        for idx_name in matrix_neg.index:
+                            if idx_name.lower() == m_name.lower():
+                                target_key = idx_name
+                                break
+
+                    if target_key:
+                        matrix_neg.loc[target_key, d_name] += 1
+                        detailed_run_logs.append({
+                            "dataset": d_name,
+                            "iteration": 1,
+                            "type": "Avoid (Neg)",
+                            "rank": rank,
+                            "model_key": target_key,
+                            "model_name_raw": m_name,
+                            "reason": reason,
+                            "analysis": full_analysis
+                        })
+            else:
+                print(f"[{idx}/{total_tasks}] ⚠️ {d_name} 无有效结果/失败")
+        except Exception as exc:
+            print(f"[{idx}/{total_tasks}] ❌ {d_name} 异常: {exc}")
 
     # 6. 保存结果
     

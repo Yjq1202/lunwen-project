@@ -3,25 +3,22 @@ import os
 import ast
 import sys
 from pathlib import Path
-from openai import OpenAI
 from dotenv import load_dotenv
+from llm_router import chat_completion_with_fallback
 
 # 加载环境变量 (需要 .env 文件中有 OPENAI_API_KEY)
 load_dotenv()
 
 # ========= ⚙️ 基本配置 =========
 
-# 初始化 OpenAI 客户端
-client = OpenAI()
-
-# 使用的 LLM 模型名称
-MODEL_NAME = "gpt-5.2"
-# 项目根目录
-PROJECT_ROOT = Path("/Users/hpy/Desktop/LLM4TSGym")
+# 使用的 LLM 模型名称（可通过环境变量覆盖；为空则使用 provider 默认模型）
+MODEL_NAME = os.getenv("CARD_BUILD_MODEL", "")
+# 项目根目录（默认当前仓库根目录）
+PROJECT_ROOT = Path(os.getenv("PROJECT_ROOT", Path(__file__).resolve().parent))
 # 扫描模型代码的目录
-MODELS_DIR = PROJECT_ROOT / "models"
-# 输出模型卡片的目录
-OUTPUT_DIR = PROJECT_ROOT / "model_cards"
+MODELS_DIR = Path(os.getenv("MODELS_DIR", PROJECT_ROOT / "models"))
+# 输出模型卡片的目录（默认新目录，避免覆盖原有 model_cards）
+OUTPUT_DIR = Path(os.getenv("CARD_BUILD_OUTPUT_DIR", PROJECT_ROOT / "model_cards_generated"))
 
 # ========= 📝 提示词模板 (Prompt) =========
 
@@ -86,6 +83,44 @@ REQUIRED_KEYS = [
   "Key Technical Details", "Resource Requirements & Complexity", "Paper Link",
   "Evidence", "Inferred Suitability"
 ]
+
+def build_dual_evidence_fields(card: dict, source_files: list) -> dict:
+    """
+    将已有的代码分析结果映射为“文献+代码双证据”结构的基础骨架。
+    说明：
+    - card_build 阶段只负责代码证据；论文摘要在 abstract_parse.py 阶段补全。
+    - 保留旧字段以兼容已有流程，同时新增结构化字段便于后续一致性审计。
+    """
+    paper_link = card.get("Paper Link", "None") or "None"
+
+    # 从原有 Evidence 字段复用直接观察
+    evidence_block = card.get("Evidence", {}) if isinstance(card.get("Evidence"), dict) else {}
+    direct_obs = evidence_block.get("Direct Observations", [])
+    if not isinstance(direct_obs, list):
+        direct_obs = []
+
+    card["Paper Abstract"] = card.get("Paper Abstract", "None")
+    card["paper_evidence"] = {
+        "paper_link": paper_link,
+        "abstract": card.get("Paper Abstract", "None"),
+        "paper_claims": card.get("paper_evidence", {}).get("paper_claims", [])
+        if isinstance(card.get("paper_evidence"), dict) else []
+    }
+
+    card["code_evidence"] = {
+        "source_files": source_files,
+        "direct_observations": direct_obs
+    }
+
+    # 一致性字段先给空骨架，待摘要补全过程填充
+    card["consistency_check"] = card.get("consistency_check", []) if isinstance(card.get("consistency_check"), list) else []
+    card["final_claims"] = card.get("final_claims", {
+        "supported_by_both": [],
+        "code_only": [],
+        "paper_only": []
+    })
+
+    return card
 
 def module_to_path(module_str):
     return PROJECT_ROOT.joinpath(*module_str.split(".")).with_suffix(".py")
@@ -213,14 +248,15 @@ def generate_model_card(py_path: Path, out_dir: Path):
     prompt = MODEL_CARD_PROMPT_TEMPLATE.format(code=code_content)
 
     try:
-        resp = client.chat.completions.create(
-            model=MODEL_NAME,
-            response_format={"type": "json_object"},  # 开启 JSON 模式
+        resp, provider, used_model = chat_completion_with_fallback(
+            model_override=MODEL_NAME or None,
+            response_json=True,
             messages=[
                 {"role": "system", "content": "You are a deep learning model analysis assistant who strictly follows instructions."},
                 {"role": "user", "content": prompt},
             ],
         )
+        print(f"ℹ️ 使用提供方: {provider}, 模型: {used_model}")
 
         content = resp.choices[0].message.content
         card = json.loads(content)
@@ -234,6 +270,9 @@ def generate_model_card(py_path: Path, out_dir: Path):
         
         # 记录所有读取的源文件
         final_card["_source_files"] = source_files
+
+        # 新增“文献+代码双证据”骨架字段
+        final_card = build_dual_evidence_fields(final_card, source_files)
         
         card = final_card
 

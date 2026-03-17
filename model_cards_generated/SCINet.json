@@ -1,0 +1,137 @@
+{
+  "model_name": "SCINet",
+  "Primary Task Type": "Long-term Forecasting",
+  "Model Architecture Category": "CNN-based",
+  "Core Mechanism & Structure": "SCINet is a hierarchical binary tree-structured network built on SCIBlocks. Each SCIBlock splits the input sequence into even and odd indices, applies causal convolutions with exponential gating for interactive feature mixing between even and odd subsequences, then recursively processes each subsequence through deeper tree levels. The architecture uses residual connections and a final 1D convolution projection for sequence length transformation.",
+  "Core Innovations": "1. Hierarchical binary tree decomposition with interactive mixing via exponential gating in SCIBlocks. 2. Causal convolutions with exponential activation for controlled feature interaction between even/odd splits. 3. Recursive tree structure enabling multi-scale temporal representation learning.",
+  "Key Technical Details": {
+    "Input Embedding": "No explicit embedding layer - raw time series input",
+    "Feature Extraction": "Causal 1D convolutions with exponential gating in SCIBlocks, hierarchical tree decomposition",
+    "Positional Encoding": "Sinusoidal absolute positional encoding (similar to Transformer)",
+    "Non-stationarity Handling": "Instance normalization with mean/std subtraction (RevIN-like) in forecast method"
+  },
+  "Evidence": {
+    "Direct Observations": [
+      {
+        "claim": "Uses hierarchical binary tree structure",
+        "evidence": "SCINet class recursively creates SCINet_Tree_odd and SCINet_Tree_even for current_level > 0"
+      },
+      {
+        "claim": "Implements SCIBlock with exponential gating",
+        "evidence": "SCIBlock forward uses x_even.mul(torch.exp(self.modules_even(x_odd))) and x_odd.mul(torch.exp(self.modules_odd(x_even)))"
+      },
+      {
+        "claim": "Uses causal convolutions",
+        "evidence": "CausalConvBlock uses nn.ReplicationPad1d((kernel_size-1, kernel_size-1)) before convolution"
+      },
+      {
+        "claim": "Implements instance normalization",
+        "evidence": "forecast method computes means = x_enc.mean(1, keepdim=True) and stdev = torch.sqrt(torch.var(x_enc, dim=1, keepdim=True))"
+      },
+      {
+        "claim": "Uses sinusoidal positional encoding",
+        "evidence": "get_position_encoding method creates sin/cos signals using inv_timescales buffer"
+      },
+      {
+        "claim": "Supports multi-stack architecture",
+        "evidence": "Model.__init__ creates sci_net_1 and sci_net_2 when configs.d_layers != 1"
+      }
+    ],
+    "Unknown / Not in Code": [
+      "No attention mechanisms found",
+      "No explicit decoder structure found",
+      "No patch embedding found",
+      "No series decomposition found beyond instance normalization"
+    ]
+  },
+  "Inferred Suitability": {
+    "Strengths": [
+      {
+        "label": "Efficient Long Sequence Processing",
+        "why": "Hierarchical tree decomposition reduces effective sequence length exponentially at each level",
+        "conditions": "When sequence length is power of 2 or near power of 2",
+        "confidence": "high"
+      },
+      {
+        "label": "Temporal Dependency Preservation",
+        "why": "Causal convolutions ensure no future information leakage",
+        "conditions": "For autoregressive forecasting tasks",
+        "confidence": "high"
+      },
+      {
+        "label": "Multi-scale Feature Learning",
+        "why": "Tree structure captures patterns at different temporal resolutions",
+        "conditions": "When data contains patterns at multiple timescales",
+        "confidence": "medium"
+      }
+    ],
+    "Weaknesses": [
+      {
+        "label": "Fixed Tree Structure Sensitivity",
+        "why": "Even/odd splitting assumes regular temporal patterns, may not capture arbitrary dependencies",
+        "conditions": "When temporal dependencies don't align with binary decomposition",
+        "confidence": "medium"
+      },
+      {
+        "label": "Limited Context Mixing",
+        "why": "Causal convolutions have limited receptive field compared to attention mechanisms",
+        "conditions": "When very long-range dependencies are crucial",
+        "confidence": "medium"
+      },
+      {
+        "label": "Padding Artifacts",
+        "why": "Replication padding in causal convolutions may create edge artifacts",
+        "conditions": "At sequence boundaries",
+        "confidence": "low"
+      }
+    ]
+  },
+  "Resource Requirements & Complexity": "Parameter count scales with d_model and tree depth. Computational complexity is approximately O(L * d_model * kernel_size * log L) due to hierarchical processing. Memory usage is linear in sequence length due to causal convolutions instead of quadratic attention.",
+  "Paper Link": "None",
+  "_source_files": [
+    "models\\SCINet.py"
+  ],
+  "Paper Abstract": "None",
+  "paper_evidence": {
+    "paper_link": "None",
+    "abstract": "None",
+    "paper_claims": []
+  },
+  "code_evidence": {
+    "source_files": [
+      "models\\SCINet.py"
+    ],
+    "direct_observations": [
+      {
+        "claim": "Uses hierarchical binary tree structure",
+        "evidence": "SCINet class recursively creates SCINet_Tree_odd and SCINet_Tree_even for current_level > 0"
+      },
+      {
+        "claim": "Implements SCIBlock with exponential gating",
+        "evidence": "SCIBlock forward uses x_even.mul(torch.exp(self.modules_even(x_odd))) and x_odd.mul(torch.exp(self.modules_odd(x_even)))"
+      },
+      {
+        "claim": "Uses causal convolutions",
+        "evidence": "CausalConvBlock uses nn.ReplicationPad1d((kernel_size-1, kernel_size-1)) before convolution"
+      },
+      {
+        "claim": "Implements instance normalization",
+        "evidence": "forecast method computes means = x_enc.mean(1, keepdim=True) and stdev = torch.sqrt(torch.var(x_enc, dim=1, keepdim=True))"
+      },
+      {
+        "claim": "Uses sinusoidal positional encoding",
+        "evidence": "get_position_encoding method creates sin/cos signals using inv_timescales buffer"
+      },
+      {
+        "claim": "Supports multi-stack architecture",
+        "evidence": "Model.__init__ creates sci_net_1 and sci_net_2 when configs.d_layers != 1"
+      }
+    ]
+  },
+  "consistency_check": [],
+  "final_claims": {
+    "supported_by_both": [],
+    "code_only": [],
+    "paper_only": []
+  }
+}

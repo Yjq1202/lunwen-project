@@ -1,27 +1,29 @@
 import json
+import os
 import re
 import time
 import requests
 from pathlib import Path
-from openai import OpenAI
 from dotenv import load_dotenv
 from bs4 import BeautifulSoup
+from llm_router import chat_completion_with_fallback
 
 # 加载环境变量
 load_dotenv()
 
 # ========= ⚙️ 配置 =========
-# 模型卡片目录 (输入)
-INPUT_DIR = Path("/Users/hpy/Desktop/LLM4TSGym/model_cards")
+# 项目根目录（默认当前仓库根目录）
+PROJECT_ROOT = Path(os.getenv("PROJECT_ROOT", Path(__file__).resolve().parent))
+# 模型卡片目录 (输入，默认读取新生成目录)
+INPUT_DIR = Path(os.getenv("ABSTRACT_PARSE_INPUT_DIR", PROJECT_ROOT / "model_cards_generated"))
 # 模型代码目录 (用于提取链接)
-MODELS_CODE_DIR = Path("/Users/hpy/Desktop/LLM4TSGym/models")
-# 输出目录 (直接覆盖更新)
-OUTPUT_DIR = Path("/Users/hpy/Desktop/LLM4TSGym/model_cards")
+MODELS_CODE_DIR = Path(os.getenv("MODELS_CODE_DIR", PROJECT_ROOT / "models"))
+# 输出目录（默认写入新目录，避免覆盖原有 model_cards）
+OUTPUT_DIR = Path(os.getenv("ABSTRACT_PARSE_OUTPUT_DIR", INPUT_DIR))
 
-MODEL_NAME = "gpt-4o"
+MODEL_NAME = os.getenv("ABSTRACT_PARSE_MODEL", "")
 TIMEOUT = 30
 
-client = OpenAI()
 
 # ========= 🛠️ 工具函数 =========
 
@@ -73,6 +75,134 @@ def extract_link_from_code(py_filename: str) -> str:
         pass
     return ""
 
+def get_card_link(data: dict) -> str:
+    """兼容新旧字段，优先读英文 schema。"""
+    url = data.get("Paper Link", "")
+    if not url:
+        url = data.get("论文链接", "")
+    return url
+
+
+def set_card_link(data: dict, url: str):
+    """统一写入英文 schema，同时回写中文字段以兼容旧流程。"""
+    data["Paper Link"] = url
+    data["论文链接"] = url
+
+
+def get_card_abstract(data: dict) -> str:
+    """兼容新旧字段，优先读英文 schema。"""
+    abstract = data.get("Paper Abstract", "")
+    if not abstract:
+        abstract = data.get("论文摘要", "")
+    return abstract
+
+
+def set_card_abstract(data: dict, abstract: str):
+    """统一写入英文 schema，同时回写中文字段以兼容旧流程。"""
+    data["Paper Abstract"] = abstract
+    data["论文摘要"] = abstract
+
+
+def extract_paper_claims(abstract: str):
+    """
+    从摘要中抽取论文主张。
+    失败时返回空列表，避免中断全流程。
+    """
+    if not abstract or abstract in ["无", "Abstract not found"]:
+        return []
+
+    prompt = f"""
+You are an academic information extraction assistant.
+Extract 3-6 concise technical claims from the paper abstract below.
+Return strict JSON with this shape:
+{{"paper_claims": [{{"claim": "...", "source": "abstract"}}]}}
+
+Abstract:
+{abstract[:6000]}
+    """.strip()
+
+    try:
+        resp, provider, used_model = chat_completion_with_fallback(
+            model_override=MODEL_NAME or None,
+            response_json=True,
+            messages=[
+                {"role": "system", "content": "You extract factual paper claims and only output JSON."},
+                {"role": "user", "content": prompt},
+            ]
+        )
+        print(f"  ℹ️ 论文主张提取使用: {provider}/{used_model}")
+        parsed = json.loads(resp.choices[0].message.content)
+        claims = parsed.get("paper_claims", [])
+        return claims if isinstance(claims, list) else []
+    except Exception as e:
+        print(f"  ⚠️ 论文主张提取失败，已跳过: {e}")
+        return []
+
+
+def build_consistency_check(paper_claims, code_observations):
+    """
+    用 LLM 对论文主张与代码观察做一致性审计。
+    返回标准结构，失败时返回空列表。
+    """
+    if not paper_claims:
+        return []
+
+    prompt = f"""
+You are a strict reviewer.
+Given paper claims and code observations, output a consistency audit.
+Return strict JSON with this schema:
+{{
+  "consistency_check": [
+    {{"item": "...", "paper": "supported/not-mentioned", "code": "implemented/not-implemented", "verdict": "consistent/partially-consistent/inconsistent"}}
+  ],
+  "final_claims": {{
+    "supported_by_both": ["..."],
+    "code_only": ["..."],
+    "paper_only": ["..."]
+  }}
+}}
+
+Paper Claims:
+{json.dumps(paper_claims, ensure_ascii=False, indent=2)}
+
+Code Observations:
+{json.dumps(code_observations, ensure_ascii=False, indent=2)}
+    """.strip()
+
+    try:
+        resp, provider, used_model = chat_completion_with_fallback(
+            model_override=MODEL_NAME or None,
+            response_json=True,
+            messages=[
+                {"role": "system", "content": "You perform consistency checks and only output JSON."},
+                {"role": "user", "content": prompt},
+            ]
+        )
+        print(f"  ℹ️ 一致性审计使用: {provider}/{used_model}")
+        parsed = json.loads(resp.choices[0].message.content)
+        checks = parsed.get("consistency_check", [])
+        final_claims = parsed.get("final_claims", {
+            "supported_by_both": [],
+            "code_only": [],
+            "paper_only": []
+        })
+        if not isinstance(checks, list):
+            checks = []
+        if not isinstance(final_claims, dict):
+            final_claims = {
+                "supported_by_both": [],
+                "code_only": [],
+                "paper_only": []
+            }
+        return checks, final_claims
+    except Exception as e:
+        print(f"  ⚠️ 一致性审计失败，已跳过: {e}")
+        return [], {
+            "supported_by_both": [],
+            "code_only": [],
+            "paper_only": []
+        }
+
 def get_abstract_via_llm(text_content: str, source_url: str) -> str:
     """将抓取到的文本喂给 LLM 提取摘要"""
     prompt = f"""
@@ -90,13 +220,15 @@ def get_abstract_via_llm(text_content: str, source_url: str) -> str:
     """ # Truncate to prevent token overflow
 
     try:
-        resp = client.chat.completions.create(
-            model=MODEL_NAME,
+        resp, provider, used_model = chat_completion_with_fallback(
+            model_override=MODEL_NAME or None,
+            response_json=False,
             messages=[
                 {"role": "system", "content": "You are an academic assistant proficient in extracting paper abstracts from webpage text."},
                 {"role": "user", "content": prompt},
             ]
         )
+        print(f"  ℹ️ 摘要提取使用: {provider}/{used_model}")
         return resp.choices[0].message.content.strip()
     except Exception as e:
         print(f"  ❌ LLM 提取失败: {e}")
@@ -155,38 +287,69 @@ def process_cards():
             data = json.loads(json_file.read_text(encoding="utf-8"))
             
             # 检查是否已有有效摘要
-            current_abstract = data.get("论文摘要", "")
+            current_abstract = get_card_abstract(data)
             if current_abstract and len(current_abstract) > 50 and "未找到" not in current_abstract and "失败" not in current_abstract:
                 print("  ✅ 已有摘要，跳过")
-                continue
+                abstract = current_abstract
+            else:
+                abstract = ""
 
             # 1. 寻找链接
-            # 仅使用 JSON 文件中已有的链接，不再从代码中提取
-            url = data.get("论文链接", "")
+            # 优先读取卡片链接，缺失时回退到模型源码注释中的 Paper link
+            url = get_card_link(data)
             
             # 如果 JSON 里原本没有 "论文链接" 字段，或者为空
             if not url or url in ["无", "代码中未找到链接", "None", "null"]:
-                 # 尝试一次从代码提取作为补充，如果用户确认不需要这步，可以注释掉下面这行
-                 # 但根据指令 "步骤3不用做，没有就不用提去了"，我们完全跳过从代码提取
-                 pass
+                 py_name = f"{json_file.stem}.py"
+                 url = extract_link_from_code(py_name)
             
-            if url and url not in ["无", "代码中未找到链接", "None", "null"]:
+            if not abstract and url and url not in ["无", "代码中未找到链接", "None", "null"]:
                 # 2. 提取摘要
                 abstract = fetch_abstract(url)
                 if abstract and "未找到摘要" not in abstract:
-                    data["论文摘要"] = abstract
+                    set_card_abstract(data, abstract)
                     print("  ✅ 摘要提取成功")
                 else:
-                    data["论文摘要"] = abstract if abstract else "自动提取失败，请人工核对。"
+                    set_card_abstract(data, abstract if abstract else "自动提取失败，请人工核对。")
                     print("  ⚠️ 自动提取失败/未找到")
-            else:
+            elif not abstract:
                 # 显式标记为无
-                data["论文链接"] = "无"
-                data["论文摘要"] = "无"
+                set_card_link(data, "无")
+                set_card_abstract(data, "无")
                 print("  ⚠️ 无链接，跳过")
 
-            # 保存 (直接覆盖原文件)
-            json_file.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+            # 无论摘要是否新抓取，都统一填充/同步关键字段
+            final_link = url if url else get_card_link(data) or "无"
+            final_abstract = get_card_abstract(data) or abstract or "无"
+            set_card_link(data, final_link)
+            set_card_abstract(data, final_abstract)
+
+            # 构建双证据字段
+            paper_claims = extract_paper_claims(final_abstract)
+            code_obs = []
+            if isinstance(data.get("Evidence"), dict):
+                code_obs = data["Evidence"].get("Direct Observations", [])
+            if not isinstance(code_obs, list):
+                code_obs = []
+
+            checks, final_claims = build_consistency_check(paper_claims, code_obs)
+
+            data["paper_evidence"] = {
+                "paper_link": final_link,
+                "abstract": final_abstract,
+                "paper_claims": paper_claims
+            }
+            data["code_evidence"] = {
+                "source_files": data.get("_source_files", []),
+                "direct_observations": code_obs
+            }
+            data["consistency_check"] = checks
+            data["final_claims"] = final_claims
+
+            # 保存到新目录（不覆盖输入目录）
+            out_path = OUTPUT_DIR / json_file.name
+            out_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+            print(f"  ✅ 已写入: {out_path}")
             
             # 礼貌性延时
             time.sleep(1)

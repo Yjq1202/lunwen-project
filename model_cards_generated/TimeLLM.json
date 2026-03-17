@@ -1,0 +1,141 @@
+{
+  "model_name": "TimeLLM",
+  "Primary Task Type": "Long-term Forecasting",
+  "Model Architecture Category": "Transformer-based (LLM-adapted)",
+  "Core Mechanism & Structure": "A hybrid architecture that combines time series patching with reprogrammed LLM embeddings for forecasting. It uses patch embedding to convert time series into patches, then reprograms these patches using cross-attention with LLM token embeddings to align them with the LLM's semantic space. The LLM (Llama/GPT2/BERT) processes the combined prompt and reprogrammed embeddings, with outputs projected back to forecast values.",
+  "Core Innovations": "1. LLM reprogramming via cross-attention to map time series patches to LLM token space. 2. Prompt engineering with statistical descriptors (min, max, median, trends, lags) to guide LLM. 3. Hybrid use of pre-trained LLMs with frozen parameters for time series forecasting.",
+  "Key Technical Details": {
+    "Input Embedding": "Patch Embedding with positional encoding (PatchEmbedding class in layers/Embed.py)",
+    "Feature Extraction": "Cross-attention based reprogramming (ReprogrammingLayer) followed by full LLM attention (LlamaModel/GPT2Model/BertModel)",
+    "Positional Encoding": "Absolute sinusoidal positional encoding (PositionalEmbedding in layers/Embed.py)",
+    "Non-stationarity Handling": "Reversible Instance Normalization (Normalize class in layers/StandardNorm.py with affine=False)"
+  },
+  "Evidence": {
+    "Direct Observations": [
+      {
+        "claim": "Uses Patch Embedding",
+        "evidence": "PatchEmbedding class in layers/Embed.py, instantiated as self.patch_embedding in Model.__init__"
+      },
+      {
+        "claim": "Uses Reprogramming Layer with cross-attention",
+        "evidence": "ReprogrammingLayer class defined in TimeLLM.py, used in Model.forward to align patches with LLM embeddings"
+      },
+      {
+        "claim": "Uses pre-trained LLM (Llama/GPT2/BERT)",
+        "evidence": "LlamaModel/GPT2Model/BertModel loaded from HuggingFace in Model.__init__ based on configs.llm_model"
+      },
+      {
+        "claim": "Uses Reversible Instance Normalization",
+        "evidence": "Normalize class in layers/StandardNorm.py, used in Model.forward for norm/denorm operations"
+      },
+      {
+        "claim": "Uses positional encoding",
+        "evidence": "PositionalEmbedding class in layers/Embed.py, used within PatchEmbedding"
+      },
+      {
+        "claim": "Generates statistical prompts",
+        "evidence": "In Model.forecast, prompt includes min, max, median, trends, and top-k lags calculated via FFT"
+      }
+    ],
+    "Unknown / Not in Code": [
+      "Specific attention mechanism type within LLM (e.g., sparse, linear)",
+      "Explicit decoder structure (model uses LLM as encoder-only)",
+      "Training loss function",
+      "Multi-task support beyond forecasting"
+    ]
+  },
+  "Inferred Suitability": {
+    "Strengths": [
+      {
+        "label": "Leverages Pre-trained LLM Knowledge",
+        "why": "Uses frozen LLM parameters, potentially transferring semantic understanding to time series",
+        "conditions": "When statistical prompts effectively guide LLM",
+        "confidence": "medium"
+      },
+      {
+        "label": "Handles Long Sequences via Patching",
+        "why": "Patch embedding reduces sequence length, making LLM processing feasible",
+        "conditions": "When patch_len and stride are appropriately set",
+        "confidence": "high"
+      },
+      {
+        "label": "Robust to Non-stationarity",
+        "why": "Uses RevIN for instance-wise normalization/denormalization",
+        "conditions": "When time series have shifting statistics",
+        "confidence": "high"
+      }
+    ],
+    "Weaknesses": [
+      {
+        "label": "High Memory Usage",
+        "why": "LLM models (e.g., Llama-7B) have billions of parameters, even when frozen",
+        "conditions": "During inference with large batch sizes",
+        "confidence": "high"
+      },
+      {
+        "label": "Slow Inference",
+        "why": "LLM forward pass is computationally heavy, especially with long prompts",
+        "conditions": "On resource-constrained hardware",
+        "confidence": "high"
+      },
+      {
+        "label": "Prompt Sensitivity",
+        "why": "Forecast quality depends on statistical prompt accuracy and LLM interpretation",
+        "conditions": "When input statistics are noisy or misleading",
+        "confidence": "medium"
+      }
+    ]
+  },
+  "Resource Requirements & Complexity": "Parameter scale dominated by LLM (e.g., Llama-7B has ~7B parameters). Computational complexity: O(L_patch * d_llm^2) for LLM attention, where L_patch is patch sequence length. Memory: high due to LLM weights and attention matrices.",
+  "Paper Link": "None",
+  "_source_files": [
+    "models\\TimeLLM.py",
+    "layers\\Embed.py",
+    "layers\\StandardNorm.py"
+  ],
+  "Paper Abstract": "None",
+  "paper_evidence": {
+    "paper_link": "None",
+    "abstract": "None",
+    "paper_claims": []
+  },
+  "code_evidence": {
+    "source_files": [
+      "models\\TimeLLM.py",
+      "layers\\Embed.py",
+      "layers\\StandardNorm.py"
+    ],
+    "direct_observations": [
+      {
+        "claim": "Uses Patch Embedding",
+        "evidence": "PatchEmbedding class in layers/Embed.py, instantiated as self.patch_embedding in Model.__init__"
+      },
+      {
+        "claim": "Uses Reprogramming Layer with cross-attention",
+        "evidence": "ReprogrammingLayer class defined in TimeLLM.py, used in Model.forward to align patches with LLM embeddings"
+      },
+      {
+        "claim": "Uses pre-trained LLM (Llama/GPT2/BERT)",
+        "evidence": "LlamaModel/GPT2Model/BertModel loaded from HuggingFace in Model.__init__ based on configs.llm_model"
+      },
+      {
+        "claim": "Uses Reversible Instance Normalization",
+        "evidence": "Normalize class in layers/StandardNorm.py, used in Model.forward for norm/denorm operations"
+      },
+      {
+        "claim": "Uses positional encoding",
+        "evidence": "PositionalEmbedding class in layers/Embed.py, used within PatchEmbedding"
+      },
+      {
+        "claim": "Generates statistical prompts",
+        "evidence": "In Model.forecast, prompt includes min, max, median, trends, and top-k lags calculated via FFT"
+      }
+    ]
+  },
+  "consistency_check": [],
+  "final_claims": {
+    "supported_by_both": [],
+    "code_only": [],
+    "paper_only": []
+  }
+}

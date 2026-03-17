@@ -1,0 +1,210 @@
+{
+  "model_name": "TiDE",
+  "Primary Task Type": "Long-term Forecasting / Short-term Forecasting / Imputation",
+  "Model Architecture Category": "MLP-based",
+  "Core Mechanism & Structure": "TiDE is a multi-layer perceptron (MLP)-based time series model that uses residual blocks for feature encoding, temporal encoding, and decoding. It processes time series through: 1) Feature encoding of exogenous temporal features via ResBlock, 2) Concatenation of normalized input series with encoded features, 3) Multi-layer encoder ResBlocks for temporal mixing, 4) Multi-layer decoder ResBlocks for projection to output dimension, 5) Temporal decoder ResBlock that combines decoded features with future temporal features, and 6) Residual projection from input to output plus instance normalization. The architecture is fully linear/MLP without attention or recurrence.",
+  "Core Innovations": "1. **Pure MLP architecture for time series**: Uses only dense layers and residual connections, avoiding attention mechanisms for efficiency. 2. **Temporal feature encoding**: Encodes exogenous time features (like hour, day) via a dedicated ResBlock and integrates them throughout the pipeline. 3. **Residual projection**: Projects the input sequence directly to the output length via a linear layer, combined with the decoded features for final prediction.",
+  "Key Technical Details": {
+    "Input Embedding": "No explicit embedding; raw time series input with instance normalization. Exogenous temporal features are encoded via ResBlock.",
+    "Feature Extraction": "Linear mixing via multi-layer ResBlocks (MLPs with residual connections), no attention or convolution.",
+    "Positional Encoding": "No positional encoding; temporal order is implicitly captured through the sequential nature of input concatenation and residual connections.",
+    "Non-stationarity Handling": "Instance normalization (mean subtraction and variance scaling) per channel in forward pass, with de-normalization at output."
+  },
+  "Evidence": {
+    "Direct Observations": [
+      {
+        "claim": "Uses instance normalization",
+        "evidence": "In forecast() and imputation() methods: means = x_enc.mean(1, keepdim=True).detach(); x_enc = x_enc - means; stdev = torch.sqrt(torch.var(x_enc, dim=1, keepdim=True, unbiased=False) + 1e-5); x_enc /= stdev"
+      },
+      {
+        "claim": "Uses residual blocks (ResBlock) as core building blocks",
+        "evidence": "Class ResBlock defined with fc1, fc2, fc3 linear layers, ReLU, dropout, and LayerNorm; used in feature_encoder, encoders, decoders, temporalDecoder"
+      },
+      {
+        "claim": "Supports multiple tasks: long_term_forecast, short_term_forecast, imputation",
+        "evidence": "Conditional branches in __init__ and forward() based on configs.task_name"
+      },
+      {
+        "claim": "Encodes exogenous temporal features",
+        "evidence": "feature_encoder = ResBlock(self.feature_dim, self.res_hidden, self.feature_encode_dim, dropout, bias); used in forecast() and imputation() with batch_y_mark or x_mark_enc"
+      },
+      {
+        "claim": "Uses residual projection from input to output",
+        "evidence": "self.residual_proj = nn.Linear(self.seq_len, self.pred_len, bias=bias) for forecast; added to temporalDecoder output in forecast()"
+      }
+    ],
+    "Unknown / Not in Code": [
+      "No attention mechanisms (self-attention, cross-attention)",
+      "No convolutional layers",
+      "No recurrent layers (RNN, LSTM, GRU)",
+      "No explicit positional encoding",
+      "No RevIN (reversible instance normalization) - uses simple instance normalization",
+      "No series decomposition components",
+      "No sparse or linear attention"
+    ]
+  },
+  "Inferred Suitability": {
+    "Strengths": [
+      {
+        "label": "Computational Efficiency",
+        "why": "Pure MLP architecture with linear layers only, no attention O(L^2) or recurrence O(L) overhead",
+        "conditions": "When sequence length L is large (e.g., >1000) and hardware favors dense matrix operations",
+        "confidence": "high"
+      },
+      {
+        "label": "Handling Exogenous Features",
+        "why": "Dedicated feature encoder for temporal covariates (hour, day, etc.) and integration throughout model",
+        "conditions": "When rich exogenous time features are available and correlated with target series",
+        "confidence": "medium"
+      },
+      {
+        "label": "Multi-task Flexibility",
+        "why": "Architecture supports forecasting, imputation, and anomaly detection via task-specific decoder and projection heads",
+        "conditions": "When same model needs to handle different time series tasks with shared backbone",
+        "confidence": "medium"
+      }
+    ],
+    "Weaknesses": [
+      {
+        "label": "Limited Long-range Dependency Modeling",
+        "why": "MLP blocks mix features globally but lack explicit temporal inductive bias like attention or recurrence",
+        "conditions": "When sequences have very long-term dependencies (>1000 steps) or complex temporal patterns",
+        "confidence": "high"
+      },
+      {
+        "label": "Sensitivity to Input Normalization",
+        "why": "Uses instance normalization per forward pass; may not handle non-stationary series with distribution shift well",
+        "conditions": "When time series have strong non-stationarity or distribution changes over time",
+        "confidence": "medium"
+      },
+      {
+        "label": "Fixed-length Processing",
+        "why": "Architecture uses fixed seq_len and pred_len via linear projections; not inherently variable-length",
+        "conditions": "When input/output lengths vary significantly across samples or tasks",
+        "confidence": "high"
+      }
+    ]
+  },
+  "Resource Requirements & Complexity": "Parameter scale roughly O((seq_len + feature_dim) * d_model * num_layers). Computational complexity O(B * L * d_model^2 * num_layers) for MLP operations, linear in sequence length L. Memory usage O(B * L * d_model) for activations, efficient compared to attention-based models.",
+  "Paper Link": "https://arxiv.org/pdf/2304.08424.pdf",
+  "_source_files": [
+    "models\\TiDE.py"
+  ],
+  "Paper Abstract": "Recent work has shown that simple linear models can outperform several Transformer based approaches in long term time-series forecasting. Motivated by this, we propose a Multi-layer Perceptron (MLP) based encoder-decoder model, Time-series Dense Encoder (TiDE), for long-term time-series forecasting that enjoys the simplicity and speed of linear models while also being able to handle covariates and non-linear dependencies. Theoretically, we prove that the simplest linear analogue of our model can achieve near optimal error rate for linear dynamical systems (LDS) under some assumptions. Empirically, we show that our method can match or outperform prior approaches on popular long-term time-series forecasting benchmarks while being 5-10x faster than the best Transformer based model.",
+  "paper_evidence": {
+    "paper_link": "https://arxiv.org/pdf/2304.08424.pdf",
+    "abstract": "Recent work has shown that simple linear models can outperform several Transformer based approaches in long term time-series forecasting. Motivated by this, we propose a Multi-layer Perceptron (MLP) based encoder-decoder model, Time-series Dense Encoder (TiDE), for long-term time-series forecasting that enjoys the simplicity and speed of linear models while also being able to handle covariates and non-linear dependencies. Theoretically, we prove that the simplest linear analogue of our model can achieve near optimal error rate for linear dynamical systems (LDS) under some assumptions. Empirically, we show that our method can match or outperform prior approaches on popular long-term time-series forecasting benchmarks while being 5-10x faster than the best Transformer based model.",
+    "paper_claims": [
+      {
+        "claim": "Simple linear models can outperform several Transformer based approaches in long term time-series forecasting.",
+        "source": "abstract"
+      },
+      {
+        "claim": "A Multi-layer Perceptron (MLP) based encoder-decoder model called Time-series Dense Encoder (TiDE) is proposed for long-term time-series forecasting.",
+        "source": "abstract"
+      },
+      {
+        "claim": "TiDE enjoys the simplicity and speed of linear models while also being able to handle covariates and non-linear dependencies.",
+        "source": "abstract"
+      },
+      {
+        "claim": "The simplest linear analogue of TiDE can achieve near optimal error rate for linear dynamical systems (LDS) under some assumptions.",
+        "source": "abstract"
+      },
+      {
+        "claim": "TiDE can match or outperform prior approaches on popular long-term time-series forecasting benchmarks.",
+        "source": "abstract"
+      },
+      {
+        "claim": "TiDE is 5-10x faster than the best Transformer based model.",
+        "source": "abstract"
+      }
+    ]
+  },
+  "code_evidence": {
+    "source_files": [
+      "models\\TiDE.py"
+    ],
+    "direct_observations": [
+      {
+        "claim": "Uses instance normalization",
+        "evidence": "In forecast() and imputation() methods: means = x_enc.mean(1, keepdim=True).detach(); x_enc = x_enc - means; stdev = torch.sqrt(torch.var(x_enc, dim=1, keepdim=True, unbiased=False) + 1e-5); x_enc /= stdev"
+      },
+      {
+        "claim": "Uses residual blocks (ResBlock) as core building blocks",
+        "evidence": "Class ResBlock defined with fc1, fc2, fc3 linear layers, ReLU, dropout, and LayerNorm; used in feature_encoder, encoders, decoders, temporalDecoder"
+      },
+      {
+        "claim": "Supports multiple tasks: long_term_forecast, short_term_forecast, imputation",
+        "evidence": "Conditional branches in __init__ and forward() based on configs.task_name"
+      },
+      {
+        "claim": "Encodes exogenous temporal features",
+        "evidence": "feature_encoder = ResBlock(self.feature_dim, self.res_hidden, self.feature_encode_dim, dropout, bias); used in forecast() and imputation() with batch_y_mark or x_mark_enc"
+      },
+      {
+        "claim": "Uses residual projection from input to output",
+        "evidence": "self.residual_proj = nn.Linear(self.seq_len, self.pred_len, bias=bias) for forecast; added to temporalDecoder output in forecast()"
+      }
+    ]
+  },
+  "consistency_check": [
+    {
+      "item": "Simple linear models can outperform several Transformer based approaches in long term time-series forecasting.",
+      "paper": "supported",
+      "code": "not-implemented",
+      "verdict": "inconsistent"
+    },
+    {
+      "item": "A Multi-layer Perceptron (MLP) based encoder-decoder model called Time-series Dense Encoder (TiDE) is proposed for long-term time-series forecasting.",
+      "paper": "supported",
+      "code": "implemented",
+      "verdict": "consistent"
+    },
+    {
+      "item": "TiDE enjoys the simplicity and speed of linear models while also being able to handle covariates and non-linear dependencies.",
+      "paper": "supported",
+      "code": "implemented",
+      "verdict": "consistent"
+    },
+    {
+      "item": "The simplest linear analogue of TiDE can achieve near optimal error rate for linear dynamical systems (LDS) under some assumptions.",
+      "paper": "supported",
+      "code": "not-implemented",
+      "verdict": "inconsistent"
+    },
+    {
+      "item": "TiDE can match or outperform prior approaches on popular long-term time-series forecasting benchmarks.",
+      "paper": "supported",
+      "code": "not-implemented",
+      "verdict": "inconsistent"
+    },
+    {
+      "item": "TiDE is 5-10x faster than the best Transformer based model.",
+      "paper": "supported",
+      "code": "not-implemented",
+      "verdict": "inconsistent"
+    }
+  ],
+  "final_claims": {
+    "supported_by_both": [
+      "A Multi-layer Perceptron (MLP) based encoder-decoder model called Time-series Dense Encoder (TiDE) is proposed for long-term time-series forecasting.",
+      "TiDE enjoys the simplicity and speed of linear models while also being able to handle covariates and non-linear dependencies."
+    ],
+    "code_only": [
+      "Uses instance normalization",
+      "Uses residual blocks (ResBlock) as core building blocks",
+      "Supports multiple tasks: long_term_forecast, short_term_forecast, imputation",
+      "Encodes exogenous temporal features",
+      "Uses residual projection from input to output"
+    ],
+    "paper_only": [
+      "Simple linear models can outperform several Transformer based approaches in long term time-series forecasting.",
+      "The simplest linear analogue of TiDE can achieve near optimal error rate for linear dynamical systems (LDS) under some assumptions.",
+      "TiDE can match or outperform prior approaches on popular long-term time-series forecasting benchmarks.",
+      "TiDE is 5-10x faster than the best Transformer based model."
+    ]
+  },
+  "论文摘要": "Recent work has shown that simple linear models can outperform several Transformer based approaches in long term time-series forecasting. Motivated by this, we propose a Multi-layer Perceptron (MLP) based encoder-decoder model, Time-series Dense Encoder (TiDE), for long-term time-series forecasting that enjoys the simplicity and speed of linear models while also being able to handle covariates and non-linear dependencies. Theoretically, we prove that the simplest linear analogue of our model can achieve near optimal error rate for linear dynamical systems (LDS) under some assumptions. Empirically, we show that our method can match or outperform prior approaches on popular long-term time-series forecasting benchmarks while being 5-10x faster than the best Transformer based model.",
+  "论文链接": "https://arxiv.org/pdf/2304.08424.pdf"
+}

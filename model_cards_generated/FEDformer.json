@@ -1,0 +1,260 @@
+{
+  "model_name": "FEDformer",
+  "Primary Task Type": "Time Series Forecasting (Long/Short-term), Imputation, Anomaly Detection, Classification",
+  "Model Architecture Category": "Transformer-based with frequency/wavelet domain attention and series decomposition",
+  "Core Mechanism & Structure": "The FEDformer model employs an Encoder-Decoder architecture, where each layer integrates a series decomposition block (inspired by Autoformer) to handle non-stationarity by separating trend and seasonal components. The core innovation lies in performing attention mechanisms (both self-attention and cross-attention) in either the frequency domain (using Fourier Transforms) or the multi-wavelet domain. This allows for efficient capture of long-range dependencies by operating on a selected subset of modes, significantly reducing computational complexity compared to standard attention.",
+  "Core Innovations": [
+    "Frequency-Domain/Multi-Wavelet Attention: Replaces traditional self-attention and cross-attention with operations on Fourier or Wavelet coefficients, enabling O(L log L) or O(L) complexity for long sequences by focusing on key frequency/scale components.",
+    "Progressive Series Decomposition: Integrates a moving average-based decomposition (seasonal-trend decomposition) within each encoder and decoder layer to explicitly model and remove non-stationary trends and seasonal patterns, enhancing robustness for diverse time series data.",
+    "Custom Layer Normalization (`my_Layernorm`): A specialized Layer Normalization variant that subtracts the mean after normalization, designed to improve the modeling of seasonal components and further address non-stationarity."
+  ],
+  "Key Technical Details": {
+    "Input Embedding": "Uses `DataEmbedding`, which combines `TokenEmbedding` (Conv1d projection of input features), `PositionalEmbedding` (standard sinusoidal absolute positional encoding), and `TemporalEmbedding` (learnable or fixed embeddings for time features like month, day, hour, weekday, and minute).",
+    "Feature Extraction": "The model uses `AutoCorrelationLayer` as a wrapper for its attention mechanisms. Depending on the `version` configuration:\n- **Fourier Version**: Self-attention is handled by `FourierBlock` and cross-attention by `FourierCrossAttention`. These modules perform Real Fast Fourier Transform (RFFT), select a subset of frequency modes, apply linear transformations via complex multiplication, and then perform Inverse RFFT (IRFFT).\n- **Wavelet Version**: Self-attention is handled by `MultiWaveletTransform` and cross-attention by `MultiWaveletCross`. These employ multi-level wavelet decomposition and reconstruction processes, applying frequency-domain transformations (like `sparseKernelFT1d` and `FourierCrossAttentionW`) at different scales.",
+    "Positional Encoding": "Absolute positional encoding is implemented via `PositionalEmbedding` which uses fixed sinusoidal functions (`torch.sin` and `torch.cos`) to inject positional information into the embeddings.",
+    "Non-stationarity Handling": "The model explicitly addresses non-stationarity through:\n- **Series Decomposition**: The `series_decomp` module (based on `moving_avg`) is integrated into every `EncoderLayer` and `DecoderLayer` to separate and process seasonal (residual) and trend components.\n- **Custom Layer Normalization**: `my_Layernorm` is applied as the normalization layer in both the Encoder and Decoder, which subtracts the mean after standard Layer Normalization, acting as a form of de-meaning for robustness."
+  },
+  "Evidence": {
+    "Direct Observations": [
+      {
+        "claim": "Primary tasks include forecasting, imputation, anomaly detection, and classification.",
+        "evidence": "The `Model.forward` method in `models\\FEDformer.py` contains explicit dispatch logic for `self.task_name` values such as 'long_term_forecast', 'short_term_forecast', 'imputation', 'anomaly_detection', and 'classification'."
+      },
+      {
+        "claim": "Uses an Encoder-Decoder architecture.",
+        "evidence": "The `Model.__init__` in `models\\FEDformer.py` instantiates `Encoder` and `Decoder` classes from `layers.Autoformer_EncDec`, and these are used in the `Model.forecast` method."
+      },
+      {
+        "claim": "Incorporates series decomposition using `moving_avg` within layers.",
+        "evidence": "The `series_decomp` class (which uses `moving_avg`) is instantiated in `Model.__init__` and extensively used within `EncoderLayer` and `DecoderLayer` classes in `layers\\Autoformer_EncDec.py`."
+      },
+      {
+        "claim": "Utilizes frequency-domain attention via `FourierBlock` and `FourierCrossAttention` when `version='fourier'`.",
+        "evidence": "In `Model.__init__` (models\\FEDformer.py), if `self.version == 'fourier'`, `encoder_self_att` is `FourierBlock` and `decoder_cross_att` is `FourierCrossAttention`, both defined in `layers\\FourierCorrelation.py`."
+      },
+      {
+        "claim": "Utilizes multi-wavelet domain attention via `MultiWaveletTransform` and `MultiWaveletCross` when `version='Wavelets'`.",
+        "evidence": "In `Model.__init__` (models\\FEDformer.py), if `self.version == 'Wavelets'`, `encoder_self_att` is `MultiWaveletTransform` and `decoder_cross_att` is `MultiWaveletCross`, both defined in `layers\\MultiWaveletCorrelation.py`."
+      },
+      {
+        "claim": "Employs `DataEmbedding` for input features, which combines `TokenEmbedding`, `PositionalEmbedding`, and `TemporalEmbedding`.",
+        "evidence": "The `DataEmbedding` class from `layers\\Embed.py` is instantiated as `self.enc_embedding` and `self.dec_embedding` in `Model.__init__`. The `DataEmbedding.forward` method explicitly sums outputs from `self.value_embedding` (TokenEmbedding), `self.temporal_embedding` (TemporalEmbedding), and `self.position_embedding` (PositionalEmbedding)."
+      },
+      {
+        "claim": "Uses sinusoidal absolute positional encoding.",
+        "evidence": "The `PositionalEmbedding` class in `layers\\Embed.py` computes `pe` using `torch.sin` and `torch.cos` on `position` and `div_term`."
+      },
+      {
+        "claim": "Includes a custom Layer Normalization, `my_Layernorm`, in Encoder and Decoder.",
+        "evidence": "The `my_Layernorm` class is defined in `layers\\Autoformer_EncDec.py` and is passed as the `norm_layer` argument when instantiating `Encoder` and `Decoder` in `Model.__init__`."
+      },
+      {
+        "claim": "The `AutoCorrelation` class from `layers.AutoCorrelation.py` is defined but not directly used by the `FEDformer` model's attention mechanism; instead, `FourierBlock`/`MultiWaveletTransform` are passed to `AutoCorrelationLayer`.",
+        "evidence": "The `AutoCorrelation` class is present in `layers\\AutoCorrelation.py`. However, in `Model.__init__` (models\\FEDformer.py), `AutoCorrelationLayer` is used, and its `correlation` argument is explicitly set to `encoder_self_att`, `decoder_self_att`, or `decoder_cross_att`, which are instances of `FourierBlock`, `MultiWaveletTransform`, `FourierCrossAttention`, or `MultiWaveletCross`, not `AutoCorrelation`."
+      }
+    ],
+    "Unknown / Not in Code": [
+      "Explicit usage of `RevIN` for input normalization (no `RevIN` class or instantiation found in the provided code)."
+    ]
+  },
+  "Inferred Suitability": {
+    "Strengths": [
+      {
+        "label": "Efficient Long Sequence Modeling",
+        "why": "The frequency/wavelet domain attention mechanisms reduce the computational complexity from O(L^2) to O(L log L) (Fourier) or O(L) (Wavelet with aggressive mode selection), making the model highly efficient for very long input sequences.",
+        "conditions": "When the input sequence length (L) is large (e.g., L > 512-1024), where quadratic complexity becomes prohibitive.",
+        "confidence": "high"
+      },
+      {
+        "label": "Robustness to Non-stationarity",
+        "why": "The explicit series decomposition within each layer, coupled with the custom `my_Layernorm`, effectively models and separates trend and seasonal components, making the model robust to non-stationary time series.",
+        "conditions": "When dealing with real-world time series data exhibiting clear trends, seasonality, or other non-stationary properties.",
+        "confidence": "high"
+      },
+      {
+        "label": "Effective Capture of Global Dependencies",
+        "why": "By operating in the frequency or wavelet domain, the model inherently captures global patterns and periodicities across the entire sequence more directly and efficiently than purely attention-based models.",
+        "conditions": "When long-range dependencies and global seasonal patterns are crucial for accurate predictions or analysis.",
+        "confidence": "high"
+      },
+      {
+        "label": "Versatile for Multiple Time Series Tasks",
+        "why": "The model's architecture is designed to handle various time series tasks, including forecasting, imputation, anomaly detection, and classification, by adapting its projection layers and output processing.",
+        "conditions": "When a single model architecture is desired for multiple related time series problems.",
+        "confidence": "high"
+      }
+    ],
+    "Weaknesses": [
+      {
+        "label": "Hyperparameter Sensitivity and Tuning Complexity",
+        "why": "The choice between 'fourier' and 'Wavelets' versions, and the number of `modes` to select, are critical hyperparameters that can significantly impact performance and may require extensive tuning for different datasets.",
+        "conditions": "When applied to new datasets or domains where optimal frequency/wavelet mode settings are not obvious.",
+        "confidence": "medium"
+      },
+      {
+        "label": "Potential Loss of Fine-grained Local Information",
+        "why": "By explicitly focusing on a limited number of low-frequency or dominant wavelet modes, the model might discard some high-frequency information, which could be vital for capturing very short-term, irregular, or abrupt changes in the time series.",
+        "conditions": "For tasks requiring precise prediction of sharp, non-periodic local fluctuations or detecting subtle, high-frequency anomalies.",
+        "confidence": "medium"
+      },
+      {
+        "label": "Increased Implementation/Debugging Complexity",
+        "why": "The use of complex-valued Fourier transforms, multi-wavelet decomposition, and custom filter generation adds significant complexity to the model's implementation and can make debugging more challenging compared to simpler architectures.",
+        "conditions": "When developers have limited experience with signal processing or complex-number arithmetic in deep learning frameworks.",
+        "confidence": "high"
+      }
+    ]
+  },
+  "Resource Requirements & Complexity": "The computational complexity for the attention mechanism is reduced from O(L^2) to O(L log L) for the Fourier version (due to FFT operations) or O(L) for the Wavelet version (with aggressive mode selection), where L is the sequence length. Memory usage for attention similarly scales, making it efficient for long sequences. The overall parameter count is comparable to a Transformer model of similar depth and hidden dimensions, typically scaling linearly with `d_model` and `n_heads`, and layer counts.",
+  "Paper Link": "https://proceedings.mlr.press/v162/zhou22g.html",
+  "_source_files": [
+    "models\\FEDformer.py",
+    "layers\\Embed.py",
+    "layers\\AutoCorrelation.py",
+    "layers\\FourierCorrelation.py",
+    "layers\\MultiWaveletCorrelation.py",
+    "layers\\Autoformer_EncDec.py"
+  ],
+  "Paper Abstract": "Long-term time series forecasting is challenging since prediction accuracy tends to decrease dramatically with the increasing horizon. Although Transformer-based methods have significantly improved state-of-the-art results for long-term forecasting, they are not only computationally expensive but more importantly, are unable to capture the global view of time series (e.g. overall trend). To address these problems, we propose to combine Transformer with the seasonal-trend decomposition method, in which the decomposition method captures the global profile of time series while Transformers capture more detailed structures. To further enhance the performance of Transformer for long-term prediction, we exploit the fact that most time series tend to have a sparse representation in a well-known basis such as Fourier transform, and develop a frequency enhanced Transformer. Besides being more effective, the proposed method, termed as Frequency Enhanced Decomposed Transformer (FEDformer), is more efficient than standard Transformer with a linear complexity to the sequence length. Our empirical studies with six benchmark datasets show that compared with state-of-the-art methods, Fedformer can reduce prediction error by 14.8% and 22.6% for multivariate and univariate time series, respectively. Code is publicly available at https://github.com/MAZiqing/FEDformer.",
+  "paper_evidence": {
+    "paper_link": "https://proceedings.mlr.press/v162/zhou22g.html",
+    "abstract": "Long-term time series forecasting is challenging since prediction accuracy tends to decrease dramatically with the increasing horizon. Although Transformer-based methods have significantly improved state-of-the-art results for long-term forecasting, they are not only computationally expensive but more importantly, are unable to capture the global view of time series (e.g. overall trend). To address these problems, we propose to combine Transformer with the seasonal-trend decomposition method, in which the decomposition method captures the global profile of time series while Transformers capture more detailed structures. To further enhance the performance of Transformer for long-term prediction, we exploit the fact that most time series tend to have a sparse representation in a well-known basis such as Fourier transform, and develop a frequency enhanced Transformer. Besides being more effective, the proposed method, termed as Frequency Enhanced Decomposed Transformer (FEDformer), is more efficient than standard Transformer with a linear complexity to the sequence length. Our empirical studies with six benchmark datasets show that compared with state-of-the-art methods, Fedformer can reduce prediction error by 14.8% and 22.6% for multivariate and univariate time series, respectively. Code is publicly available at https://github.com/MAZiqing/FEDformer.",
+    "paper_claims": [
+      {
+        "claim": "Long-term time series forecasting accuracy decreases with increasing horizon.",
+        "source": "abstract"
+      },
+      {
+        "claim": "Transformer-based methods for long-term forecasting are computationally expensive and cannot capture global time series trends.",
+        "source": "abstract"
+      },
+      {
+        "claim": "The proposed method combines Transformer with seasonal-trend decomposition to capture global profiles and detailed structures.",
+        "source": "abstract"
+      },
+      {
+        "claim": "A frequency enhanced Transformer exploits sparse representation in bases like Fourier transform for improved long-term prediction.",
+        "source": "abstract"
+      },
+      {
+        "claim": "The Frequency Enhanced Decomposed Transformer (FEDformer) has linear complexity to sequence length, making it more efficient than standard Transformer.",
+        "source": "abstract"
+      },
+      {
+        "claim": "Empirical studies show FEDformer reduces prediction error by 14.8% for multivariate and 22.6% for univariate time series compared to state-of-the-art methods.",
+        "source": "abstract"
+      }
+    ]
+  },
+  "code_evidence": {
+    "source_files": [
+      "models\\FEDformer.py",
+      "layers\\Embed.py",
+      "layers\\AutoCorrelation.py",
+      "layers\\FourierCorrelation.py",
+      "layers\\MultiWaveletCorrelation.py",
+      "layers\\Autoformer_EncDec.py"
+    ],
+    "direct_observations": [
+      {
+        "claim": "Primary tasks include forecasting, imputation, anomaly detection, and classification.",
+        "evidence": "The `Model.forward` method in `models\\FEDformer.py` contains explicit dispatch logic for `self.task_name` values such as 'long_term_forecast', 'short_term_forecast', 'imputation', 'anomaly_detection', and 'classification'."
+      },
+      {
+        "claim": "Uses an Encoder-Decoder architecture.",
+        "evidence": "The `Model.__init__` in `models\\FEDformer.py` instantiates `Encoder` and `Decoder` classes from `layers.Autoformer_EncDec`, and these are used in the `Model.forecast` method."
+      },
+      {
+        "claim": "Incorporates series decomposition using `moving_avg` within layers.",
+        "evidence": "The `series_decomp` class (which uses `moving_avg`) is instantiated in `Model.__init__` and extensively used within `EncoderLayer` and `DecoderLayer` classes in `layers\\Autoformer_EncDec.py`."
+      },
+      {
+        "claim": "Utilizes frequency-domain attention via `FourierBlock` and `FourierCrossAttention` when `version='fourier'`.",
+        "evidence": "In `Model.__init__` (models\\FEDformer.py), if `self.version == 'fourier'`, `encoder_self_att` is `FourierBlock` and `decoder_cross_att` is `FourierCrossAttention`, both defined in `layers\\FourierCorrelation.py`."
+      },
+      {
+        "claim": "Utilizes multi-wavelet domain attention via `MultiWaveletTransform` and `MultiWaveletCross` when `version='Wavelets'`.",
+        "evidence": "In `Model.__init__` (models\\FEDformer.py), if `self.version == 'Wavelets'`, `encoder_self_att` is `MultiWaveletTransform` and `decoder_cross_att` is `MultiWaveletCross`, both defined in `layers\\MultiWaveletCorrelation.py`."
+      },
+      {
+        "claim": "Employs `DataEmbedding` for input features, which combines `TokenEmbedding`, `PositionalEmbedding`, and `TemporalEmbedding`.",
+        "evidence": "The `DataEmbedding` class from `layers\\Embed.py` is instantiated as `self.enc_embedding` and `self.dec_embedding` in `Model.__init__`. The `DataEmbedding.forward` method explicitly sums outputs from `self.value_embedding` (TokenEmbedding), `self.temporal_embedding` (TemporalEmbedding), and `self.position_embedding` (PositionalEmbedding)."
+      },
+      {
+        "claim": "Uses sinusoidal absolute positional encoding.",
+        "evidence": "The `PositionalEmbedding` class in `layers\\Embed.py` computes `pe` using `torch.sin` and `torch.cos` on `position` and `div_term`."
+      },
+      {
+        "claim": "Includes a custom Layer Normalization, `my_Layernorm`, in Encoder and Decoder.",
+        "evidence": "The `my_Layernorm` class is defined in `layers\\Autoformer_EncDec.py` and is passed as the `norm_layer` argument when instantiating `Encoder` and `Decoder` in `Model.__init__`."
+      },
+      {
+        "claim": "The `AutoCorrelation` class from `layers.AutoCorrelation.py` is defined but not directly used by the `FEDformer` model's attention mechanism; instead, `FourierBlock`/`MultiWaveletTransform` are passed to `AutoCorrelationLayer`.",
+        "evidence": "The `AutoCorrelation` class is present in `layers\\AutoCorrelation.py`. However, in `Model.__init__` (models\\FEDformer.py), `AutoCorrelationLayer` is used, and its `correlation` argument is explicitly set to `encoder_self_att`, `decoder_self_att`, or `decoder_cross_att`, which are instances of `FourierBlock`, `MultiWaveletTransform`, `FourierCrossAttention`, or `MultiWaveletCross`, not `AutoCorrelation`."
+      }
+    ]
+  },
+  "consistency_check": [
+    {
+      "item": "Long-term time series forecasting accuracy decreases with increasing horizon.",
+      "paper": "supported",
+      "code": "not-implemented",
+      "verdict": "inconsistent"
+    },
+    {
+      "item": "Transformer-based methods for long-term forecasting are computationally expensive and cannot capture global time series trends.",
+      "paper": "supported",
+      "code": "not-implemented",
+      "verdict": "inconsistent"
+    },
+    {
+      "item": "The proposed method combines Transformer with seasonal-trend decomposition to capture global profiles and detailed structures.",
+      "paper": "supported",
+      "code": "implemented",
+      "verdict": "consistent"
+    },
+    {
+      "item": "A frequency enhanced Transformer exploits sparse representation in bases like Fourier transform for improved long-term prediction.",
+      "paper": "supported",
+      "code": "implemented",
+      "verdict": "consistent"
+    },
+    {
+      "item": "The Frequency Enhanced Decomposed Transformer (FEDformer) has linear complexity to sequence length, making it more efficient than standard Transformer.",
+      "paper": "supported",
+      "code": "not-implemented",
+      "verdict": "inconsistent"
+    },
+    {
+      "item": "Empirical studies show FEDformer reduces prediction error by 14.8% for multivariate and 22.6% for univariate time series compared to state-of-the-art methods.",
+      "paper": "supported",
+      "code": "not-implemented",
+      "verdict": "inconsistent"
+    }
+  ],
+  "final_claims": {
+    "supported_by_both": [
+      "The proposed method combines Transformer with seasonal-trend decomposition to capture global profiles and detailed structures.",
+      "A frequency enhanced Transformer exploits sparse representation in bases like Fourier transform for improved long-term prediction."
+    ],
+    "code_only": [
+      "Primary tasks include forecasting, imputation, anomaly detection, and classification.",
+      "Uses an Encoder-Decoder architecture.",
+      "Incorporates series decomposition using `moving_avg` within layers.",
+      "Utilizes frequency-domain attention via `FourierBlock` and `FourierCrossAttention` when `version='fourier'`.",
+      "Utilizes multi-wavelet domain attention via `MultiWaveletTransform` and `MultiWaveletCross` when `version='Wavelets'`.",
+      "Employs `DataEmbedding` for input features, which combines `TokenEmbedding`, `PositionalEmbedding`, and `TemporalEmbedding`.",
+      "Uses sinusoidal absolute positional encoding.",
+      "Includes a custom Layer Normalization, `my_Layernorm`, in Encoder and Decoder.",
+      "The `AutoCorrelation` class from `layers.AutoCorrelation.py` is defined but not directly used by the `FEDformer` model's attention mechanism; instead, `FourierBlock`/`MultiWaveletTransform` are passed to `AutoCorrelationLayer`."
+    ],
+    "paper_only": [
+      "Long-term time series forecasting accuracy decreases with increasing horizon.",
+      "Transformer-based methods for long-term forecasting are computationally expensive and cannot capture global time series trends.",
+      "The Frequency Enhanced Decomposed Transformer (FEDformer) has linear complexity to sequence length, making it more efficient than standard Transformer.",
+      "Empirical studies show FEDformer reduces prediction error by 14.8% for multivariate and 22.6% for univariate time series compared to state-of-the-art methods."
+    ]
+  },
+  "论文摘要": "Long-term time series forecasting is challenging since prediction accuracy tends to decrease dramatically with the increasing horizon. Although Transformer-based methods have significantly improved state-of-the-art results for long-term forecasting, they are not only computationally expensive but more importantly, are unable to capture the global view of time series (e.g. overall trend). To address these problems, we propose to combine Transformer with the seasonal-trend decomposition method, in which the decomposition method captures the global profile of time series while Transformers capture more detailed structures. To further enhance the performance of Transformer for long-term prediction, we exploit the fact that most time series tend to have a sparse representation in a well-known basis such as Fourier transform, and develop a frequency enhanced Transformer. Besides being more effective, the proposed method, termed as Frequency Enhanced Decomposed Transformer (FEDformer), is more efficient than standard Transformer with a linear complexity to the sequence length. Our empirical studies with six benchmark datasets show that compared with state-of-the-art methods, Fedformer can reduce prediction error by 14.8% and 22.6% for multivariate and univariate time series, respectively. Code is publicly available at https://github.com/MAZiqing/FEDformer.",
+  "论文链接": "https://proceedings.mlr.press/v162/zhou22g.html"
+}

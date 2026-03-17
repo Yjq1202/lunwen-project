@@ -1,0 +1,233 @@
+{
+  "model_name": "Koopa",
+  "Primary Task Type": "Long-term Forecasting",
+  "Model Architecture Category": "Koopman Operator based, Fourier Decomposition",
+  "Core Mechanism & Structure": "Koopa disentangles time series into time-variant (high-frequency) and time-invariant (low-frequency) components using a Fourier Filter with dynamically selected frequency masks. It then applies separate Koopman-based predictors for each component: an analytical Dynamic Mode Decomposition (DMD) for the time-variant dynamics on segmented input, and a learnable linear Koopman operator for the time-invariant dynamics. Multiple Koopa blocks are iteratively applied on the residual signal, and the model incorporates series stationarization for robust non-stationarity handling.",
+  "Core Innovations": [
+    "Frequency-Domain Disentanglement: Explicitly separates time series into time-variant and time-invariant components using a Fourier Filter based on dynamically identified dominant frequencies from training data.",
+    "Dual Koopman Dynamics: Employs distinct Koopman operator learning strategies tailored for the disentangled components – analytical DMD for time-variant dynamics and a learnable linear operator for time-invariant dynamics.",
+    "Iterative Residual Refinement: Applies multiple Koopa blocks in a residual learning fashion, where subsequent blocks operate on the remaining signal after backcasting the time-variant component, progressively refining the overall forecast."
+  ],
+  "Key Technical Details": {
+    "Input Embedding": "MLPs (`self.time_inv_encoder` and `self.time_var_encoder`) are used to project raw input data (or segmented input for time-variant branch) into a latent Koopman space (`dynamic_dim`).",
+    "Feature Extraction": "The `FourierFilter` performs spectral decomposition. For the time-variant component, Dynamic Mode Decomposition (DMD) analytically derives a linear Koopman operator via `torch.linalg.lstsq`. For the time-invariant component, a trainable `nn.Linear` layer acts as the Koopman operator. MLPs are used for non-linear transformations before and after the Koopman layers.",
+    "Positional Encoding": "No explicit positional encoding mechanism is observed. The model implicitly handles sequence order through input segmentation and the application of linear dynamics operators.",
+    "Non-stationarity Handling": "Global mean and standard deviation normalization/denormalization ('Series Stationarization' as noted in code comments, similar to NSformer) is applied. Additionally, the `FourierFilter` explicitly aims to separate time-variant (often associated with transient non-stationarity) from time-invariant (stable patterns, trends) components."
+  },
+  "Evidence": {
+    "Direct Observations": [
+      {
+        "claim": "Uses FourierFilter for series disentanglement",
+        "evidence": "Class `FourierFilter` found in `models/Koopa.py`, initialized as `self.disentanglement` in `Model.__init__` and used in `Model.forecast` method."
+      },
+      {
+        "claim": "Uses Dynamic Mode Decomposition (DMD) for time-variant dynamics",
+        "evidence": "Classes `KPLayer` and `KPLayerApprox` in `models/Koopa.py` implement DMD using `torch.linalg.lstsq`. These are used by `TimeVarKP`, which is then used in `Model.forecast`."
+      },
+      {
+        "claim": "Uses a learnable linear operator for time-invariant dynamics",
+        "evidence": "`TimeInvKP` class in `models/Koopa.py` defines `self.K = nn.Linear(self.dynamic_dim, self.dynamic_dim, bias=False)` which is a learnable Koopman operator."
+      },
+      {
+        "claim": "Employs shared MLPs for encoding/decoding",
+        "evidence": "`MLP` class in `models/Koopa.py` is instantiated as `self.time_inv_encoder`/`decoder` and `self.time_var_encoder`/`decoder` in `Model.__init__`, and passed to `TimeInvKP` and `TimeVarKP`."
+      },
+      {
+        "claim": "Applies Series Stationarization (mean/std normalization)",
+        "evidence": "`Model.forecast` method includes lines: `mean_enc = x_enc.mean(1, keepdim=True).detach()`, `x_enc = x_enc - mean_enc`, `std_enc = torch.sqrt(torch.var(x_enc, dim=1, keepdim=True, unbiased=False) + 1e-5).detach()`, `x_enc = x_enc / std_enc` for normalization, and similar lines for denormalization."
+      },
+      {
+        "claim": "Dynamically determines frequency mask based on training data",
+        "evidence": "`Model._get_mask_spectrum` method loads training data via `data_provider`, computes average frequency amplitudes using `torch.fft.rfft().mean().mean()`, and selects top frequencies using `.topk()` to form `mask_spectrum`."
+      },
+      {
+        "claim": "Forecasts are accumulated iteratively over multiple blocks on residuals",
+        "evidence": "In `Model.forecast`, there is a loop `for i in range(self.num_blocks)` where `residual = residual - time_var_backcast` and `forecast` is updated with `forecast += (time_inv_output + time_var_output)`."
+      },
+      {
+        "claim": "The segment length for time-variant processing equals the prediction length",
+        "evidence": "In `Model.__init__`, `self.seg_len = self.pred_len`."
+      }
+    ],
+    "Unknown / Not in Code": []
+  },
+  "Inferred Suitability": {
+    "Strengths": [
+      {
+        "label": "Long-term Forecasting",
+        "why": "The Koopman operator's ability to model linear dynamics in a lifted space allows for efficient and theoretically sound extrapolation. The multi-step approximation (`KPLayerApprox`) and iterative refinement further enhance long-horizon prediction. Disentangling frequencies allows separate handling of short-term variations and long-term trends.",
+        "conditions": "When the underlying dynamics of the time series can be effectively approximated as linear in a latent Koopman space, and when time-variant and time-invariant components are separable in the frequency domain.",
+        "confidence": "high"
+      },
+      {
+        "label": "Handling Non-stationarity",
+        "why": "The combination of global mean/std normalization and the Fourier decomposition into distinct frequency components provides a robust mechanism to manage trends, seasonality, and other varying statistical properties.",
+        "conditions": "When non-stationarity manifests as global shifts in mean/variance or as separable frequency components that can be modeled by the dual Koopman approach.",
+        "confidence": "high"
+      },
+      {
+        "label": "Computational Efficiency for Long Sequences",
+        "why": "Unlike attention-based models with O(L^2) complexity, this model's complexity scales linearly with sequence length (due to FFT and segmentation) and polynomially with `dynamic_dim` (E) or `seg_len` (P). This is generally more favorable for very long time series when `E` and `P` are much smaller than `L`.",
+        "conditions": "When the `dynamic_dim` (E) and `seg_len` (P) are kept relatively small compared to the input sequence length `L`.",
+        "confidence": "medium"
+      }
+    ],
+    "Weaknesses": [
+      {
+        "label": "Limited to Linear Dynamics (in Koopman Space)",
+        "why": "The core of the Koopman approach assumes linear dynamics in a lifted space. If the true underlying system is highly non-linear and cannot be adequately linearized by the MLP encoders, the model's predictive power for such intricate non-linearities might be limited.",
+        "conditions": "For highly complex, chaotic, or abruptly changing non-linear time series that cannot be effectively represented in a linear Koopman space.",
+        "confidence": "medium"
+      },
+      {
+        "label": "Sensitivity to Hyperparameters",
+        "why": "The performance heavily relies on hyperparameters like `dynamic_dim` (latent space dimension), `seg_len` (segment length for time-variant branch), `alpha` (for frequency mask selection), and `num_blocks`. Optimal values are data-dependent and require careful tuning.",
+        "conditions": "When these hyperparameters are not carefully tuned for a specific dataset, leading to suboptimal capture of latent dynamics or improper frequency decomposition.",
+        "confidence": "high"
+      },
+      {
+        "label": "Dependency on Training Data for Frequency Mask",
+        "why": "The dynamic selection of the time-invariant frequency mask (`_get_mask_spectrum`) relies on the statistics of the training data. If the frequency characteristics of the time series change significantly between training and inference (e.g., strong concept drift), the fixed mask might become suboptimal.",
+        "conditions": "When the frequency spectrum of the time series exhibits significant non-stationarity or drift over time, making the training-derived mask less representative.",
+        "confidence": "medium"
+      }
+    ]
+  },
+  "Resource Requirements & Complexity": "The parameter count is dominated by the MLPs and the learnable Koopman operator, roughly scaling as O(input_len * dynamic_dim * hidden_layers + dynamic_dim^2 + pred_len * enc_in * dynamic_dim * hidden_layers). This is generally moderate. Computational complexity involves FFT (O(L log L)), MLP operations, and DMD via `lstsq` (approximately O(B * P * E^2) or O(B * P * E^3) for segments/blocks) and matrix power (O(B * E^3 log P_len)). Overall, the model scales roughly linearly with sequence length (L) and polynomially with `dynamic_dim` (E) and `seg_len` (P), making it more efficient for very long sequences compared to O(L^2) attention-based models, provided E and P are sufficiently smaller than L.",
+  "Paper Link": "https://arxiv.org/pdf/2305.18803.pdf",
+  "_source_files": [
+    "models\\Koopa.py"
+  ],
+  "Paper Abstract": "Real-world time series are characterized by intrinsic non-stationarity that poses a principal challenge for deep forecasting models. While previous models suffer from complicated series variations induced by changing temporal distribution, we tackle non-stationary time series with modern Koopman theory that fundamentally considers the underlying time-variant dynamics. Inspired by Koopman theory of portraying complex dynamical systems, we disentangle time-variant and time-invariant components from intricate non-stationary series by Fourier Filter and design Koopman Predictor to advance respective dynamics forward. Technically, we propose Koopa as a novel Koopman forecaster composed of stackable blocks that learn hierarchical dynamics. Koopa seeks measurement functions for Koopman embedding and utilizes Koopman operators as linear portraits of implicit transition. To cope with time-variant dynamics that exhibits strong locality, Koopa calculates context-aware operators in the temporal neighborhood and is able to utilize incoming ground truth to scale up forecast horizon. Besides, by integrating Koopman Predictors into deep residual structure, we ravel out the binding reconstruction loss in previous Koopman forecasters and achieve end-to-end forecasting objective optimization. Compared with the state-of-the-art model, Koopa achieves competitive performance while saving 77.3% training time and 76.0% memory.",
+  "paper_evidence": {
+    "paper_link": "https://arxiv.org/pdf/2305.18803.pdf",
+    "abstract": "Real-world time series are characterized by intrinsic non-stationarity that poses a principal challenge for deep forecasting models. While previous models suffer from complicated series variations induced by changing temporal distribution, we tackle non-stationary time series with modern Koopman theory that fundamentally considers the underlying time-variant dynamics. Inspired by Koopman theory of portraying complex dynamical systems, we disentangle time-variant and time-invariant components from intricate non-stationary series by Fourier Filter and design Koopman Predictor to advance respective dynamics forward. Technically, we propose Koopa as a novel Koopman forecaster composed of stackable blocks that learn hierarchical dynamics. Koopa seeks measurement functions for Koopman embedding and utilizes Koopman operators as linear portraits of implicit transition. To cope with time-variant dynamics that exhibits strong locality, Koopa calculates context-aware operators in the temporal neighborhood and is able to utilize incoming ground truth to scale up forecast horizon. Besides, by integrating Koopman Predictors into deep residual structure, we ravel out the binding reconstruction loss in previous Koopman forecasters and achieve end-to-end forecasting objective optimization. Compared with the state-of-the-art model, Koopa achieves competitive performance while saving 77.3% training time and 76.0% memory.",
+    "paper_claims": [
+      {
+        "claim": "Real-world time series have intrinsic non-stationarity that challenges deep forecasting models.",
+        "source": "abstract"
+      },
+      {
+        "claim": "Koopa tackles non-stationary time series using Koopman theory to consider underlying time-variant dynamics.",
+        "source": "abstract"
+      },
+      {
+        "claim": "Koopa disentangles time-variant and time-invariant components from non-stationary series using Fourier Filter.",
+        "source": "abstract"
+      },
+      {
+        "claim": "Koopa calculates context-aware Koopman operators in temporal neighborhoods to handle time-variant dynamics with strong locality.",
+        "source": "abstract"
+      },
+      {
+        "claim": "Koopa integrates Koopman Predictors into deep residual structure to achieve end-to-end forecasting optimization.",
+        "source": "abstract"
+      },
+      {
+        "claim": "Koopa achieves competitive performance while saving 77.3% training time and 76.0% memory compared to state-of-the-art models.",
+        "source": "abstract"
+      }
+    ]
+  },
+  "code_evidence": {
+    "source_files": [
+      "models\\Koopa.py"
+    ],
+    "direct_observations": [
+      {
+        "claim": "Uses FourierFilter for series disentanglement",
+        "evidence": "Class `FourierFilter` found in `models/Koopa.py`, initialized as `self.disentanglement` in `Model.__init__` and used in `Model.forecast` method."
+      },
+      {
+        "claim": "Uses Dynamic Mode Decomposition (DMD) for time-variant dynamics",
+        "evidence": "Classes `KPLayer` and `KPLayerApprox` in `models/Koopa.py` implement DMD using `torch.linalg.lstsq`. These are used by `TimeVarKP`, which is then used in `Model.forecast`."
+      },
+      {
+        "claim": "Uses a learnable linear operator for time-invariant dynamics",
+        "evidence": "`TimeInvKP` class in `models/Koopa.py` defines `self.K = nn.Linear(self.dynamic_dim, self.dynamic_dim, bias=False)` which is a learnable Koopman operator."
+      },
+      {
+        "claim": "Employs shared MLPs for encoding/decoding",
+        "evidence": "`MLP` class in `models/Koopa.py` is instantiated as `self.time_inv_encoder`/`decoder` and `self.time_var_encoder`/`decoder` in `Model.__init__`, and passed to `TimeInvKP` and `TimeVarKP`."
+      },
+      {
+        "claim": "Applies Series Stationarization (mean/std normalization)",
+        "evidence": "`Model.forecast` method includes lines: `mean_enc = x_enc.mean(1, keepdim=True).detach()`, `x_enc = x_enc - mean_enc`, `std_enc = torch.sqrt(torch.var(x_enc, dim=1, keepdim=True, unbiased=False) + 1e-5).detach()`, `x_enc = x_enc / std_enc` for normalization, and similar lines for denormalization."
+      },
+      {
+        "claim": "Dynamically determines frequency mask based on training data",
+        "evidence": "`Model._get_mask_spectrum` method loads training data via `data_provider`, computes average frequency amplitudes using `torch.fft.rfft().mean().mean()`, and selects top frequencies using `.topk()` to form `mask_spectrum`."
+      },
+      {
+        "claim": "Forecasts are accumulated iteratively over multiple blocks on residuals",
+        "evidence": "In `Model.forecast`, there is a loop `for i in range(self.num_blocks)` where `residual = residual - time_var_backcast` and `forecast` is updated with `forecast += (time_inv_output + time_var_output)`."
+      },
+      {
+        "claim": "The segment length for time-variant processing equals the prediction length",
+        "evidence": "In `Model.__init__`, `self.seg_len = self.pred_len`."
+      }
+    ]
+  },
+  "consistency_check": [
+    {
+      "item": "Real-world time series have intrinsic non-stationarity that challenges deep forecasting models.",
+      "paper": "supported",
+      "code": "implemented",
+      "verdict": "consistent"
+    },
+    {
+      "item": "Koopa tackles non-stationary time series using Koopman theory to consider underlying time-variant dynamics.",
+      "paper": "supported",
+      "code": "implemented",
+      "verdict": "consistent"
+    },
+    {
+      "item": "Koopa disentangles time-variant and time-invariant components from non-stationary series using Fourier Filter.",
+      "paper": "supported",
+      "code": "implemented",
+      "verdict": "consistent"
+    },
+    {
+      "item": "Koopa calculates context-aware Koopman operators in temporal neighborhoods to handle time-variant dynamics with strong locality.",
+      "paper": "supported",
+      "code": "implemented",
+      "verdict": "consistent"
+    },
+    {
+      "item": "Koopa integrates Koopman Predictors into deep residual structure to achieve end-to-end forecasting optimization.",
+      "paper": "supported",
+      "code": "implemented",
+      "verdict": "consistent"
+    },
+    {
+      "item": "Koopa achieves competitive performance while saving 77.3% training time and 76.0% memory compared to state-of-the-art models.",
+      "paper": "supported",
+      "code": "not-implemented",
+      "verdict": "inconsistent"
+    }
+  ],
+  "final_claims": {
+    "supported_by_both": [
+      "Real-world time series have intrinsic non-stationarity that challenges deep forecasting models.",
+      "Koopa tackles non-stationary time series using Koopman theory to consider underlying time-variant dynamics.",
+      "Koopa disentangles time-variant and time-invariant components from non-stationary series using Fourier Filter.",
+      "Koopa calculates context-aware Koopman operators in temporal neighborhoods to handle time-variant dynamics with strong locality.",
+      "Koopa integrates Koopman Predictors into deep residual structure to achieve end-to-end forecasting optimization."
+    ],
+    "code_only": [
+      "Uses FourierFilter for series disentanglement",
+      "Uses Dynamic Mode Decomposition (DMD) for time-variant dynamics",
+      "Uses a learnable linear operator for time-invariant dynamics",
+      "Employs shared MLPs for encoding/decoding",
+      "Applies Series Stationarization (mean/std normalization)",
+      "Dynamically determines frequency mask based on training data",
+      "Forecasts are accumulated iteratively over multiple blocks on residuals",
+      "The segment length for time-variant processing equals the prediction length"
+    ],
+    "paper_only": [
+      "Koopa achieves competitive performance while saving 77.3% training time and 76.0% memory compared to state-of-the-art models."
+    ]
+  },
+  "论文摘要": "Real-world time series are characterized by intrinsic non-stationarity that poses a principal challenge for deep forecasting models. While previous models suffer from complicated series variations induced by changing temporal distribution, we tackle non-stationary time series with modern Koopman theory that fundamentally considers the underlying time-variant dynamics. Inspired by Koopman theory of portraying complex dynamical systems, we disentangle time-variant and time-invariant components from intricate non-stationary series by Fourier Filter and design Koopman Predictor to advance respective dynamics forward. Technically, we propose Koopa as a novel Koopman forecaster composed of stackable blocks that learn hierarchical dynamics. Koopa seeks measurement functions for Koopman embedding and utilizes Koopman operators as linear portraits of implicit transition. To cope with time-variant dynamics that exhibits strong locality, Koopa calculates context-aware operators in the temporal neighborhood and is able to utilize incoming ground truth to scale up forecast horizon. Besides, by integrating Koopman Predictors into deep residual structure, we ravel out the binding reconstruction loss in previous Koopman forecasters and achieve end-to-end forecasting objective optimization. Compared with the state-of-the-art model, Koopa achieves competitive performance while saving 77.3% training time and 76.0% memory.",
+  "论文链接": "https://arxiv.org/pdf/2305.18803.pdf"
+}

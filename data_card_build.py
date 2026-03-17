@@ -3,11 +3,11 @@ import numpy as np
 import json
 import os
 from pathlib import Path
-from openai import OpenAI
 from dotenv import load_dotenv
 from scipy.fft import fft, fftfreq
 from scipy import stats as scipy_stats
 from statsmodels.tsa.stattools import adfuller
+from llm_router import chat_completion_with_fallback
 import warnings
 
 # Ignore statsmodels warnings
@@ -18,8 +18,7 @@ load_dotenv()
 # ========= ⚙️ Configuration =========
 DATASET_DIR = Path("dataset") # Relative path
 OUTPUT_DIR = Path("dataset_cards") # Relative path
-MODEL_NAME = "gpt-4o"
-client = OpenAI()
+MODEL_NAME = os.getenv("DATA_CARD_MODEL", "")
 
 class DatasetProfiler:
     def __init__(self, file_path):
@@ -218,13 +217,13 @@ def generate_llm_enrichment(profile):
     )
     
     try:
-        resp = client.chat.completions.create(
-            model=MODEL_NAME,
+        resp, _, _ = chat_completion_with_fallback(
+            model_override=MODEL_NAME or None,
             messages=[
                 {"role": "system", "content": "You output valid JSON only."},
                 {"role": "user", "content": prompt},
             ],
-            response_format={"type": "json_object"}
+            response_json=True,
         )
         return json.loads(resp.choices[0].message.content)
     except Exception as e:

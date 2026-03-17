@@ -1,0 +1,158 @@
+{
+  "model_name": "TimesNet",
+  "Primary Task Type": "Long-term Forecasting / Imputation / Anomaly Detection / Classification",
+  "Model Architecture Category": "CNN-based with Fourier Transform for temporal pattern discovery",
+  "Core Mechanism & Structure": "TimesNet is a time series foundation model that transforms 1D time series into 2D tensors based on multiple periods discovered via FFT, then applies 2D Inception-style convolutions to capture intra-period and inter-period variations simultaneously. It uses a multi-period adaptive aggregation mechanism with residual connections.",
+  "Core Innovations": "1. Times2D Block: Converts 1D time series to 2D representations based on multiple periods identified via FFT, enabling 2D convolution to capture complex temporal patterns. 2. Multi-period Adaptive Aggregation: Dynamically weights different period-based representations using softmax-normalized FFT amplitudes. 3. Parameter-efficient Inception Blocks: Uses multi-kernel 2D convolutions with varying receptive fields to capture patterns at different scales.",
+  "Key Technical Details": {
+    "Input Embedding": "TokenEmbedding (1D convolution with circular padding) + PositionalEmbedding (sinusoidal) + TemporalEmbedding (for time features) or TimeFeatureEmbedding",
+    "Feature Extraction": "2D Inception-style convolutions (Inception_Block_V1) applied to period-folded 2D tensors, capturing both intra-period and inter-period variations",
+    "Positional Encoding": "Absolute sinusoidal positional encoding (PositionalEmbedding class)",
+    "Non-stationarity Handling": "Reversible Instance Normalization (RevIN-like implementation directly in Model.forward methods: mean subtraction and standard deviation division, with de-normalization)"
+  },
+  "Evidence": {
+    "Direct Observations": [
+      {
+        "claim": "Uses RevIN-like normalization",
+        "evidence": "In Model.forecast(), Model.imputation(), and Model.anomaly_detection(): mean subtraction and standard deviation division with de-normalization using means and stdev"
+      },
+      {
+        "claim": "Uses FFT for period discovery",
+        "evidence": "FFT_for_Period function in TimesNet.py computes FFT and extracts top-k periods based on amplitude"
+      },
+      {
+        "claim": "Uses 2D convolutions for feature extraction",
+        "evidence": "TimesBlock uses Inception_Block_V1 (2D convolution) from layers/Conv_Blocks.py"
+      },
+      {
+        "claim": "Uses multi-period adaptive aggregation",
+        "evidence": "TimesBlock.forward() computes period_weight via softmax on FFT amplitudes and aggregates representations using weighted sum"
+      },
+      {
+        "claim": "Uses residual connections",
+        "evidence": "TimesBlock.forward() returns res + x (residual connection)"
+      },
+      {
+        "claim": "Supports multiple tasks",
+        "evidence": "Model class has separate methods for forecast, imputation, anomaly_detection, and classification with different projection heads"
+      },
+      {
+        "claim": "Uses sinusoidal positional encoding",
+        "evidence": "PositionalEmbedding class in layers/Embed.py implements absolute sinusoidal encoding"
+      },
+      {
+        "claim": "Uses token embedding via 1D convolution",
+        "evidence": "TokenEmbedding class in layers/Embed.py uses Conv1d with circular padding"
+      }
+    ],
+    "Unknown / Not in Code": [
+      "Explicit RevIN class (though functionality is implemented directly)",
+      "Attention mechanisms (uses convolutions instead)",
+      "Transformer encoder/decoder blocks",
+      "Recurrent neural network components",
+      "State space model components"
+    ]
+  },
+  "Inferred Suitability": {
+    "Strengths": [
+      {
+        "label": "Multi-period Pattern Capture",
+        "why": "FFT-based period discovery and 2D convolution on folded tensors can capture complex periodic patterns at multiple scales",
+        "conditions": "When time series have clear periodic components",
+        "confidence": "high"
+      },
+      {
+        "label": "Multi-task Capability",
+        "why": "Separate forward methods for forecasting, imputation, anomaly detection, and classification with task-specific projections",
+        "conditions": "When same architecture needs to be applied to different time series tasks",
+        "confidence": "high"
+      },
+      {
+        "label": "Efficient Long Sequence Processing",
+        "why": "2D convolution on folded tensors reduces computational complexity compared to full attention on long sequences",
+        "conditions": "When sequence length is large and can be folded into periods",
+        "confidence": "medium"
+      }
+    ],
+    "Weaknesses": [
+      {
+        "label": "Period Dependency",
+        "why": "Performance depends on FFT's ability to detect meaningful periods; may fail on non-periodic or irregularly periodic data",
+        "conditions": "When time series lacks clear periodic patterns or has irregular periodicity",
+        "confidence": "medium"
+      },
+      {
+        "label": "Fixed Period Folding",
+        "why": "Padding to make sequence length divisible by period may introduce artifacts or require zero-padding",
+        "conditions": "When sequence length is not nicely divisible by discovered periods",
+        "confidence": "medium"
+      },
+      {
+        "label": "Limited Temporal Dependencies",
+        "why": "2D convolution on folded tensors may not capture very long-range dependencies across multiple periods as effectively as attention mechanisms",
+        "conditions": "When modeling extremely long-range dependencies across hundreds of periods",
+        "confidence": "low"
+      }
+    ]
+  },
+  "Resource Requirements & Complexity": "Parameter scale depends on d_model, d_ff, num_kernels, and e_layers. Complexity is O(B * T * N * d_model * k * (period operations + 2D conv)). 2D convolution on folded tensors is more efficient than O(T^2) attention but still requires significant memory for multiple period representations.",
+  "Paper Link": "https://openreview.net/pdf?id=ju_Uqw384Oq",
+  "_source_files": [
+    "models\\TimesNet.py",
+    "layers\\Embed.py",
+    "layers\\Conv_Blocks.py"
+  ],
+  "Paper Abstract": "None",
+  "paper_evidence": {
+    "paper_link": "https://openreview.net/pdf?id=ju_Uqw384Oq",
+    "abstract": "None",
+    "paper_claims": []
+  },
+  "code_evidence": {
+    "source_files": [
+      "models\\TimesNet.py",
+      "layers\\Embed.py",
+      "layers\\Conv_Blocks.py"
+    ],
+    "direct_observations": [
+      {
+        "claim": "Uses RevIN-like normalization",
+        "evidence": "In Model.forecast(), Model.imputation(), and Model.anomaly_detection(): mean subtraction and standard deviation division with de-normalization using means and stdev"
+      },
+      {
+        "claim": "Uses FFT for period discovery",
+        "evidence": "FFT_for_Period function in TimesNet.py computes FFT and extracts top-k periods based on amplitude"
+      },
+      {
+        "claim": "Uses 2D convolutions for feature extraction",
+        "evidence": "TimesBlock uses Inception_Block_V1 (2D convolution) from layers/Conv_Blocks.py"
+      },
+      {
+        "claim": "Uses multi-period adaptive aggregation",
+        "evidence": "TimesBlock.forward() computes period_weight via softmax on FFT amplitudes and aggregates representations using weighted sum"
+      },
+      {
+        "claim": "Uses residual connections",
+        "evidence": "TimesBlock.forward() returns res + x (residual connection)"
+      },
+      {
+        "claim": "Supports multiple tasks",
+        "evidence": "Model class has separate methods for forecast, imputation, anomaly_detection, and classification with different projection heads"
+      },
+      {
+        "claim": "Uses sinusoidal positional encoding",
+        "evidence": "PositionalEmbedding class in layers/Embed.py implements absolute sinusoidal encoding"
+      },
+      {
+        "claim": "Uses token embedding via 1D convolution",
+        "evidence": "TokenEmbedding class in layers/Embed.py uses Conv1d with circular padding"
+      }
+    ]
+  },
+  "consistency_check": [],
+  "final_claims": {
+    "supported_by_both": [],
+    "code_only": [],
+    "paper_only": []
+  }
+}
