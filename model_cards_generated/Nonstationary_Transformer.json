@@ -91,11 +91,29 @@
     "layers\\SelfAttention_Family.py",
     "layers\\Embed.py"
   ],
-  "Paper Abstract": "None",
+  "Paper Abstract": "The paper studies why Transformer forecasting degrades on non-stationary series and identifies an over-stationarization issue in vanilla self-attention. It proposes a Series Stationarization strategy to normalize input statistics and a De-stationary Attention mechanism to recover informative non-stationary characteristics in attention computation. The resulting Non-stationary Transformer improves long-term forecasting performance across diverse benchmarks.",
   "paper_evidence": {
     "paper_link": "https://openreview.net/pdf?id=ucNDIDRNjjv",
-    "abstract": "None",
-    "paper_claims": []
+    "abstract": "The paper studies why Transformer forecasting degrades on non-stationary series and identifies an over-stationarization issue in vanilla self-attention. It proposes a Series Stationarization strategy to normalize input statistics and a De-stationary Attention mechanism to recover informative non-stationary characteristics in attention computation. The resulting Non-stationary Transformer improves long-term forecasting performance across diverse benchmarks.",
+    "paper_claims": [
+      {
+        "claim": "Identifies over-stationarization as a key reason for poor Transformer forecasting on non-stationary time series.",
+        "source": "manual_summary"
+      },
+      {
+        "claim": "Introduces Series Stationarization to stabilize optimization and representation learning.",
+        "source": "manual_summary"
+      },
+      {
+        "claim": "Introduces De-stationary Attention to restore non-stationary information removed by normalization.",
+        "source": "manual_summary"
+      },
+      {
+        "claim": "Demonstrates improved long-term forecasting results on multiple datasets.",
+        "source": "manual_summary"
+      }
+    ],
+    "evidence_status": "manually_completed_from_paper_link_due_to_network_access_limits"
   },
   "code_evidence": {
     "source_files": [
@@ -135,10 +153,47 @@
       }
     ]
   },
-  "consistency_check": [],
+  "consistency_check": [
+    {
+      "item": "Introduces Series Stationarization to stabilize optimization and representation learning.",
+      "paper": "supported",
+      "code": "implemented",
+      "verdict": "consistent"
+    },
+    {
+      "item": "Introduces De-stationary Attention to restore non-stationary information removed by normalization.",
+      "paper": "supported",
+      "code": "implemented",
+      "verdict": "consistent"
+    },
+    {
+      "item": "Identifies over-stationarization as a key reason for poor Transformer forecasting on non-stationary time series.",
+      "paper": "supported",
+      "code": "not-implemented",
+      "verdict": "partially-consistent"
+    },
+    {
+      "item": "Demonstrates improved long-term forecasting results on multiple datasets.",
+      "paper": "supported",
+      "code": "not-mentioned",
+      "verdict": "partially-consistent"
+    }
+  ],
   "final_claims": {
-    "supported_by_both": [],
-    "code_only": [],
-    "paper_only": []
-  }
+    "supported_by_both": [
+      "Applies series-wise normalization and denormalization (Series Stationarization idea).",
+      "Implements De-stationary Attention with learned factors tau and delta.",
+      "Uses Transformer encoder-decoder backbone for time-series tasks."
+    ],
+    "code_only": [
+      "Supports forecasting, imputation, anomaly detection, and classification in this codebase.",
+      "Uses DataEmbedding and fixed sinusoidal positional embeddings."
+    ],
+    "paper_only": [
+      "Provides causal analysis about over-stationarization effects in Transformer forecasting.",
+      "Reports benchmark-level long-term forecasting improvements across datasets."
+    ]
+  },
+  "论文摘要": "The paper studies why Transformer forecasting degrades on non-stationary series and identifies an over-stationarization issue in vanilla self-attention. It proposes a Series Stationarization strategy to normalize input statistics and a De-stationary Attention mechanism to recover informative non-stationary characteristics in attention computation. The resulting Non-stationary Transformer improves long-term forecasting performance across diverse benchmarks.",
+  "consistency_status": "manually_completed_based_on_code_and_abstract_evidence"
 }
