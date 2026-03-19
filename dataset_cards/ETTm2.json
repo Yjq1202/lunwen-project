@@ -42,12 +42,5 @@
     "dataset_name_pretty": "Electricity Transformer Temperature (Minute-level)",
     "domain": "Energy",
     "description": "The ETTm2 dataset contains minute-level measurements related to electricity transformer temperatures. It appears to be well-maintained, with no missing data and a stationary nature confirmed by the ADF test. The dataset displays low seasonality and trend, however, it is characterized by consistent patterns, as indicated by high autocorrelation at lag 1. This stability suggests reliable long-term dependencies in the data, making it suitable for multistep time-series forecasting.",
-    "recommended_model_types": [
-      "Decomposition Transformers",
-      "Linear Models",
-      "Autoregressive Models",
-      "Traditional Time-Series Models"
-    ],
-    "reasoning_for_recommendation": "Given the stationary nature and high autocorrelation, decomposition and linear models can effectively model consistent patterns, while traditional autoregressive models can leverage the strong long-term dependencies."
   }
 }
