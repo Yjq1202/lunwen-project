@@ -42,12 +42,5 @@
     "dataset_name_pretty": "Traffic Volume Data",
     "domain": "Traffic",
     "description": "The dataset named 'traffic' captures traffic volume measurements from multiple sensors over a significant time period. With no missing data and a primarily stationary series, the data exhibits a slightly positive skewness and near-normal kurtosis. The key characteristics include strong autocorrelation at lag 1 but minimal trend and seasonality, as indicated by low trend slope and seasonality strength. This suggests that while the dataset is robust in terms of stationarity, its predictability over extended horizons may require consideration of its subtle periodicity and high autocorrelation when developing forecasting models.",
-    "recommended_model_types": [
-      "Decomposition Transformers",
-      "Frequency-domain Models",
-      "Linear Models",
-      "Normalization-based Transformers"
-    ],
-    "reasoning_for_recommendation": "Given the dataset's high autocorrelation and long sequence length, models that can manage subtle periodicity and autocorrelation such as decomposition transformers, frequency-domain models, and linear models are ideal."
   }
 }
