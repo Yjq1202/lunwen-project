@@ -42,11 +42,5 @@
     "dataset_name_pretty": "Weather Monitoring Data",
     "domain": "Meteorology",
     "description": "The dataset captures weather conditions, including atmospheric pressure, temperature, humidity, and wind metrics. Notably, the data shows no missing values and maintains stationarity as indicated by the ADF test results. Despite the absence of strong trends or seasonality, evidenced by low coefficients, the series displays extremely high skewness and kurtosis, suggesting the presence of outliers or infrequent extreme events. The main period identified does not coincide with known seasonal periods, indicating irregular periodicity. The high autocorrelation at lag 1 hints at persistent effects over short timescales, presenting unique challenges for modeling especially in capturing these nuanced patterns.",
-    "recommended_model_types": [
-      "Linear Models",
-      "Normalization-based Transformers",
-      "Robust Models"
-    ],
-    "reasoning_for_recommendation": "Due to the high skewness with no strong trend or seasonality, models that handle stationarity and capture intricate dependencies, like linear models and normalization-based transformers, are suitable."
   }
 }
