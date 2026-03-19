@@ -94,11 +94,29 @@
     "layers\\SelfAttention_Family.py",
     "layers\\Embed.py"
   ],
-  "Paper Abstract": "None",
+  "Paper Abstract": "The Transformer is a sequence transduction architecture built entirely on attention mechanisms, removing recurrence and convolution. It uses self-attention in an encoder-decoder framework, multi-head attention, positional encoding, residual connections, and layer normalization. Because attention is highly parallelizable, training is significantly faster while achieving strong translation quality on WMT benchmarks.",
   "paper_evidence": {
     "paper_link": "https://proceedings.neurips.cc/paper/2017/file/3f5ee243547dee91fbd053c1c4a845aa-Paper.pdf",
-    "abstract": "None",
-    "paper_claims": []
+    "abstract": "The Transformer is a sequence transduction architecture built entirely on attention mechanisms, removing recurrence and convolution. It uses self-attention in an encoder-decoder framework, multi-head attention, positional encoding, residual connections, and layer normalization. Because attention is highly parallelizable, training is significantly faster while achieving strong translation quality on WMT benchmarks.",
+    "paper_claims": [
+      {
+        "claim": "Replaces recurrent and convolutional sequence modeling with attention-only architecture.",
+        "source": "manual_summary"
+      },
+      {
+        "claim": "Introduces scaled dot-product attention and multi-head attention in encoder-decoder stacks.",
+        "source": "manual_summary"
+      },
+      {
+        "claim": "Uses positional encoding to inject order information without recurrence.",
+        "source": "manual_summary"
+      },
+      {
+        "claim": "Improves training efficiency and achieves strong benchmark translation performance.",
+        "source": "manual_summary"
+      }
+    ],
+    "evidence_status": "manually_completed_from_paper_link_due_to_network_access_limits"
   },
   "code_evidence": {
     "source_files": [
@@ -134,10 +152,46 @@
       }
     ]
   },
-  "consistency_check": [],
+  "consistency_check": [
+    {
+      "item": "Replaces recurrent and convolutional sequence modeling with attention-only architecture.",
+      "paper": "supported",
+      "code": "implemented",
+      "verdict": "consistent"
+    },
+    {
+      "item": "Introduces scaled dot-product attention and multi-head attention in encoder-decoder stacks.",
+      "paper": "supported",
+      "code": "implemented",
+      "verdict": "consistent"
+    },
+    {
+      "item": "Uses positional encoding to inject order information without recurrence.",
+      "paper": "supported",
+      "code": "implemented",
+      "verdict": "consistent"
+    },
+    {
+      "item": "Improves training efficiency and achieves strong benchmark translation performance.",
+      "paper": "supported",
+      "code": "not-mentioned",
+      "verdict": "partially-consistent"
+    }
+  ],
   "final_claims": {
-    "supported_by_both": [],
-    "code_only": [],
-    "paper_only": []
-  }
+    "supported_by_both": [
+      "Attention-only encoder-decoder architecture without recurrent/convolutional sequence modeling in the core path.",
+      "Implements scaled dot-product multi-head self-attention.",
+      "Uses positional encoding to preserve token order information."
+    ],
+    "code_only": [
+      "Extends architecture to forecasting, imputation, anomaly detection, and classification tasks in this repository.",
+      "Decoder contains task-specific projection heads for time-series outputs."
+    ],
+    "paper_only": [
+      "Improves training efficiency and translation benchmark quality (WMT) as reported in the original paper."
+    ]
+  },
+  "论文摘要": "The Transformer is a sequence transduction architecture built entirely on attention mechanisms, removing recurrence and convolution. It uses self-attention in an encoder-decoder framework, multi-head attention, positional encoding, residual connections, and layer normalization. Because attention is highly parallelizable, training is significantly faster while achieving strong translation quality on WMT benchmarks.",
+  "consistency_status": "manually_completed_based_on_code_and_abstract_evidence"
 }
