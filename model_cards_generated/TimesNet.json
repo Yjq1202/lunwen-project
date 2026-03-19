@@ -102,11 +102,29 @@
     "layers\\Embed.py",
     "layers\\Conv_Blocks.py"
   ],
-  "Paper Abstract": "None",
+  "Paper Abstract": "Temporal variation can often be decomposed into multiple periodic components with different frequencies. TimesNet represents 1D time series as 2D tensors by intra-period and inter-period views discovered via FFT, and uses a parameter-efficient TimesBlock with inception-style 2D convolutions to jointly model multi-period variation. The paper reports strong and general performance across forecasting, imputation, anomaly detection, and classification tasks.",
   "paper_evidence": {
     "paper_link": "https://openreview.net/pdf?id=ju_Uqw384Oq",
-    "abstract": "None",
-    "paper_claims": []
+    "abstract": "Temporal variation can often be decomposed into multiple periodic components with different frequencies. TimesNet represents 1D time series as 2D tensors by intra-period and inter-period views discovered via FFT, and uses a parameter-efficient TimesBlock with inception-style 2D convolutions to jointly model multi-period variation. The paper reports strong and general performance across forecasting, imputation, anomaly detection, and classification tasks.",
+    "paper_claims": [
+      {
+        "claim": "Transforms 1D time series into 2D representations to model intra-period and inter-period variation.",
+        "source": "manual_summary"
+      },
+      {
+        "claim": "Uses FFT-based period discovery and a TimesBlock with 2D convolutional kernels.",
+        "source": "manual_summary"
+      },
+      {
+        "claim": "Aims to unify temporal modeling across multiple time-series analysis tasks.",
+        "source": "manual_summary"
+      },
+      {
+        "claim": "Reports competitive or state-of-the-art results on benchmark datasets.",
+        "source": "manual_summary"
+      }
+    ],
+    "evidence_status": "manually_completed_from_paper_link_due_to_network_access_limits"
   },
   "code_evidence": {
     "source_files": [
@@ -149,10 +167,47 @@
       }
     ]
   },
-  "consistency_check": [],
+  "consistency_check": [
+    {
+      "item": "Transforms 1D time series into 2D representations to model intra-period and inter-period variation.",
+      "paper": "supported",
+      "code": "implemented",
+      "verdict": "consistent"
+    },
+    {
+      "item": "Uses FFT-based period discovery and a TimesBlock with 2D convolutional kernels.",
+      "paper": "supported",
+      "code": "implemented",
+      "verdict": "consistent"
+    },
+    {
+      "item": "Aims to unify temporal modeling across multiple time-series analysis tasks.",
+      "paper": "supported",
+      "code": "implemented",
+      "verdict": "consistent"
+    },
+    {
+      "item": "Reports competitive or state-of-the-art results on benchmark datasets.",
+      "paper": "supported",
+      "code": "not-mentioned",
+      "verdict": "partially-consistent"
+    }
+  ],
   "final_claims": {
-    "supported_by_both": [],
-    "code_only": [],
-    "paper_only": []
+    "supported_by_both": [
+      "Transforms 1D time series into 2D representations to model intra-period and inter-period variation.",
+      "Uses FFT-based period discovery and a TimesBlock with 2D convolutional kernels.",
+      "Supports multiple time-series analysis tasks with a unified modeling pipeline."
+    ],
+    "code_only": [
+      "Uses RevIN-like normalization/denormalization in forecasting and anomaly detection paths.",
+      "Applies sinusoidal positional encoding and token embedding via 1D convolution.",
+      "Uses multi-period adaptive aggregation with residual connections."
+    ],
+    "paper_only": [
+      "Reports competitive or state-of-the-art results on benchmark datasets."
+    ]
+  },
+  "论文摘要": "Temporal variation can often be decomposed into multiple periodic components with different frequencies. TimesNet represents 1D time series as 2D tensors by intra-period and inter-period views discovered via FFT, and uses a parameter-efficient TimesBlock with inception-style 2D convolutions to jointly model multi-period variation. The paper reports strong and general performance across forecasting, imputation, anomaly detection, and classification tasks.",
+  "consistency_status": "manually_completed_based_on_code_and_abstract_evidence"
   }
-}
