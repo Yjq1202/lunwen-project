@@ -42,11 +42,5 @@
     "dataset_name_pretty": "Electricity Transformer Temperature (Minute Level)",
     "domain": "Energy",
     "description": "The dataset 'ETTm1', likely representing Electricity Transformer Temperature measurements, contains minute-level data with seven key metrics. This dataset is stationary as indicated by the ADF test, but it shows low trend linearity and minimal seasonality strength, suggesting a relatively stable pattern over time with subtle fluctuations. The absence of missing values and moderate coefficients of variation imply a well-behaved dataset for modeling. Despite the weak trend and seasonality, the dataset may present challenges due to its size and complexity when making longer horizon predictions.",
-    "recommended_model_types": [
-      "Linear Models",
-      "PatchTST",
-      "Non-stationary Transformers"
-    ],
-    "reasoning_for_recommendation": "Given the stationary nature and slight trend presence, models such as linear baselines or normalization-based transformers are well-suited to capture subtle patterns without overfitting."
   }
 }
