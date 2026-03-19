@@ -42,11 +42,5 @@
     "dataset_name_pretty": "Exchange Rate Time Series (Multivariate)",
     "domain": "Finance",
     "description": "The dataset 'exchange_rate' captures multivariate time series data encompassing various exchange rates or related financial metrics over time, as indicated by column names like '0', '1', '2', etc., leading to the target variable 'OT'. Despite covering a substantial number of observations (7,588), the dataset is characterized by its non-stationarity, evidenced by an ADF test p-value of 0.4797 and a lack of significant trend or seasonality, as indicated by low trend slope and seasonality strength metrics. This poses challenges typical in financial data like sudden distribution shifts, requiring careful handling to reliably forecast future exchange rates.",
-    "recommended_model_types": [
-      "Normalization-based Transformers",
-      "Linear Models",
-      "Non-stationary Transformers"
-    ],
-    "reasoning_for_recommendation": "Due to the non-stationary nature of the dataset with minimal trend and seasonality, normalization-based and non-stationary transformers, along with linear models, are appropriate to capture potential underlying patterns and manage distribution shifts."
   }
 }
