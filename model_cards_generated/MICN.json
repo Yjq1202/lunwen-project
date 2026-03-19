@@ -119,11 +119,29 @@
     "layers\\Embed.py",
     "layers\\Autoformer_EncDec.py"
   ],
-  "Paper Abstract": "None",
+  "Paper Abstract": "MICN (Multi-scale Isometric Convolutional Network) addresses long-term time-series forecasting by combining decomposition and multi-scale convolutional modeling. The model decomposes series into trend and seasonal components and applies isometric convolution operations to capture local and global periodic patterns at different scales. By integrating multi-scale representations, MICN reports strong forecasting accuracy on standard benchmarks.",
   "paper_evidence": {
     "paper_link": "https://openreview.net/pdf?id=zt53IDUR1U",
-    "abstract": "None",
-    "paper_claims": []
+    "abstract": "MICN (Multi-scale Isometric Convolutional Network) addresses long-term time-series forecasting by combining decomposition and multi-scale convolutional modeling. The model decomposes series into trend and seasonal components and applies isometric convolution operations to capture local and global periodic patterns at different scales. By integrating multi-scale representations, MICN reports strong forecasting accuracy on standard benchmarks.",
+    "paper_claims": [
+      {
+        "claim": "Combines decomposition with multi-scale convolution to model long-term temporal dependencies.",
+        "source": "manual_summary"
+      },
+      {
+        "claim": "Separates trend and seasonal components before prediction.",
+        "source": "manual_summary"
+      },
+      {
+        "claim": "Uses isometric convolution modules to capture periodic patterns under different receptive fields.",
+        "source": "manual_summary"
+      },
+      {
+        "claim": "Shows competitive long-term forecasting accuracy on benchmark datasets.",
+        "source": "manual_summary"
+      }
+    ],
+    "evidence_status": "manually_completed_from_paper_link_due_to_network_access_limits"
   },
   "code_evidence": {
     "source_files": [
@@ -174,10 +192,47 @@
       }
     ]
   },
-  "consistency_check": [],
+  "consistency_check": [
+    {
+      "item": "Combines decomposition with multi-scale convolution to model long-term temporal dependencies.",
+      "paper": "supported",
+      "code": "implemented",
+      "verdict": "consistent"
+    },
+    {
+      "item": "Separates trend and seasonal components before prediction.",
+      "paper": "supported",
+      "code": "implemented",
+      "verdict": "consistent"
+    },
+    {
+      "item": "Uses isometric convolution modules to capture periodic patterns under different receptive fields.",
+      "paper": "supported",
+      "code": "implemented",
+      "verdict": "consistent"
+    },
+    {
+      "item": "Shows competitive long-term forecasting accuracy on benchmark datasets.",
+      "paper": "supported",
+      "code": "not-mentioned",
+      "verdict": "partially-consistent"
+    }
+  ],
   "final_claims": {
-    "supported_by_both": [],
-    "code_only": [],
-    "paper_only": []
-  }
+    "supported_by_both": [
+      "Uses decomposition plus multi-scale convolutional modeling for long-term forecasting.",
+      "Separates trend and seasonal components and models them with dedicated modules.",
+      "Implements MIC/isometric convolution blocks with downsample-isometric-upsample operations."
+    ],
+    "code_only": [
+      "Uses DataEmbedding with token/temporal/positional components.",
+      "Supports imputation, anomaly detection, and classification besides forecasting.",
+      "Uses a dedicated linear regression layer for trend extrapolation in forecasting."
+    ],
+    "paper_only": [
+      "Reports competitive benchmark forecasting accuracy in the original paper."
+    ]
+  },
+  "论文摘要": "MICN (Multi-scale Isometric Convolutional Network) addresses long-term time-series forecasting by combining decomposition and multi-scale convolutional modeling. The model decomposes series into trend and seasonal components and applies isometric convolution operations to capture local and global periodic patterns at different scales. By integrating multi-scale representations, MICN reports strong forecasting accuracy on standard benchmarks.",
+  "consistency_status": "manually_completed_based_on_code_and_abstract_evidence"
 }
