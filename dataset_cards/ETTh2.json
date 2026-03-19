@@ -42,11 +42,5 @@
     "dataset_name_pretty": "Electricity Transformer Temperature (Hourly) - ETTh2",
     "domain": "Energy",
     "description": "The ETTh2 dataset represents hourly measurements relevant to electricity transformer temperatures, intended for multivariate time series forecasting tasks. The dataset consists of 17,420 rows and 7 columns, with zero missing data and a non-stationary nature indicated by the ADF test. While there is minimal seasonal strength and a slight downward trend, the primary challenge comes from managing the distribution shifts due to its non-stationarity. The dataset's main period length suggests patterns that are over a long cycle, and strong autocorrelation at lag 1 means past values heavily influence immediate future ones.",
-    "recommended_model_types": [
-      "Normalization-based Transformers (e.g., PatchTST, Non-stationary Transformer)",
-      "Linear Models (e.g., DLinear)",
-      "Robust Models"
-    ],
-    "reasoning_for_recommendation": "Due to the dataset's non-stationary nature and high autocorrelation, normalization-based transformers and linear models can effectively capture complex temporal dependencies while handling distribution shifts."
   }
 }
