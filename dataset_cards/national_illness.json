@@ -42,13 +42,5 @@
     "dataset_name_pretty": "National Illness Trends Dataset",
     "domain": "Healthcare",
     "description": "This dataset, from the healthcare domain, tracks illness trends through various influenza-like illness indicators, including weighted and unweighted ILI percentages across different age groups and the total number of reported cases. The dataset shows a strong trend as indicated by a high trend linearity (R2 = 0.78) and a notable trend slope, with minimal influence from seasonality (seasonality strength = 0.07). The presence of non-stationarity (ADF p-value = 0.7598) highlights potential challenges in forecasting due to shifts in distribution over time.",
-    "recommended_model_types": [
-      "Normalization-based Transformers",
-      "Linear Models",
-      "Non-stationary Transformers",
-      "PatchTST",
-      "DLinear"
-    ],
-    "reasoning_for_recommendation": "Given the strong trend and non-stationary nature of the dataset, normalization-based models and linear baselines are suitable to handle distribution shifts and extract meaningful insights over time."
   }
 }
