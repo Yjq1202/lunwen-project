@@ -42,11 +42,5 @@
     "dataset_name_pretty": "Electricity Transformer Temperature (Hourly)",
     "domain": "Energy",
     "description": "The data originates from the ETTh1 dataset, likely focused on monitoring electricity transformer temperatures over time. It contains 17,420 hourly records across seven key measurements. The dataset exhibits non-stationary behavior as the Augmented Dickey-Fuller test suggests a lack of stationarity with a p-value of 0.1319. There are no missing values, indicating consistent data collection. The data shows no strong trend or seasonality, supported by a low trend linearity (R2 = 0.39) and weak seasonality strength. High autocorrelation at lag 1 (0.99) suggests persistence in the data but with subtle changes over time, making prediction challenging.",
-    "recommended_model_types": [
-      "Normalization-based Transformers",
-      "Linear Models",
-      "Robust Models"
-    ],
-    "reasoning_for_recommendation": "Given the non-stationary nature and absence of strong seasonality or trend, normalization-based models and linear approaches are apt to handle distribution shifts, while robust models can manage the low noise environment."
   }
 }
